@@ -49,7 +49,7 @@ logger = logging.getLogger(__name__)
 
 # Configuration
 TELLOR_LAYER_RPC_URL = os.getenv('TELLOR_LAYER_RPC_URL', 'https://node-palmito.tellorlayer.com/rpc/')
-LAYER_GRPC_URL = os.getenv('LAYER_GRPC_URL', 'http://node-palmito.tellorlayer.com')
+LAYER_GRPC_URL = os.getenv('LAYER_GRPC_URL', 'https://node-palmito.tellorlayer.com')
 ETHEREUM_RPC_URL = os.getenv('ETHEREUM_RPC_URL', 'https://rpc.sepolia.org')
 SEPOLIA_TRB_CONTRACT = os.getenv('SEPOLIA_TRB_CONTRACT', '0x80fc34a2f9FfE86F41580F47368289C402DEc660')
 SEPOLIA_BRIDGE_CONTRACT = os.getenv('SEPOLIA_BRIDGE_CONTRACT', '0x5acb5977f35b1A91C4fE0F4386eB669E046776F2')
@@ -294,7 +294,7 @@ class SupplyDataCollector:
             Tuple of (not_bonded_tokens, bonded_tokens) in TRB units or None if failed
         """
         try:
-            url = f"{LAYER_GRPC_URL}:1317/cosmos/staking/v1beta1/pool"
+            url = f"{LAYER_GRPC_URL}/cosmos/staking/v1beta1/pool"
             headers = {}
             
             if height is not None:
@@ -618,8 +618,8 @@ class SupplyDataCollector:
                 try:
                     closest_data['layer_total_supply_trb'] = float(closest_data.get('layer_total_supply_trb', 0))
                     closest_data['bridge_balance_trb'] = float(closest_data.get('bridge_balance_trb', 0))
-                    closest_data['not_bonded_tokens'] = int(closest_data.get('not_bonded_tokens', 0))
-                    closest_data['bonded_tokens'] = int(closest_data.get('bonded_tokens', 0))
+                    closest_data['not_bonded_tokens'] = float(closest_data.get('not_bonded_tokens', 0))
+                    closest_data['bonded_tokens'] = float(closest_data.get('bonded_tokens', 0))
                     closest_data['layer_block_timestamp'] = int(closest_data.get('layer_block_timestamp', 0))
                     closest_data['layer_block_height'] = int(closest_data.get('layer_block_height', 0))
                     closest_data['free_floating_trb'] = float(closest_data.get('free_floating_trb', 0))
@@ -681,7 +681,7 @@ class SupplyDataCollector:
             description += f"• **Bridge Balance:** {current_bridge:,.2f} TRB\n"
             description += f"• **Free Floating TRB:** {current_free_floating:,.2f} TRB\n"
             description += f"• **Bonded Tokens:** {current_bonded:,}\n"
-            description += f"• **Not Bonded Tokens:** {current_not_bonded:,}\n"
+            description += f"• **Unbonded Tokens:** {current_not_bonded:,}\n"
             description += f"• **Block Height:** {current_height:,}\n"
             description += f"• **Timestamp:** <t:{current_timestamp}:F>\n\n"
             
@@ -718,7 +718,7 @@ class SupplyDataCollector:
                 description += f"• **Bridge Balance:** {self.format_percentage_change(bridge_change)}\n"
                 description += f"• **Free Floating TRB:** {self.format_percentage_change(free_floating_change)}\n"
                 description += f"• **Bonded Tokens:** {self.format_percentage_change(bonded_change)}\n"
-                description += f"• **Not Bonded Tokens:** {self.format_percentage_change(not_bonded_change)}\n"
+                description += f"• **Unbonded Tokens:** {self.format_percentage_change(not_bonded_change)}\n"
                 description += f"• **Average Block Time:** {average_block_time:.2f} seconds\n\n"
                 
                 description += "**📋 24 Hours Ago:**\n"
@@ -727,7 +727,7 @@ class SupplyDataCollector:
                 description += f"• **Bridge Balance:** {hist_bridge:,.2f} TRB\n"
                 description += f"• **Free Floating TRB:** {hist_free_floating:,.2f} TRB\n"
                 description += f"• **Bonded Tokens:** {hist_bonded:,}\n"
-                description += f"• **Not Bonded Tokens:** {hist_not_bonded:,}\n"
+                description += f"• **Unbonded Tokens:** {hist_not_bonded:,}\n"
                 description += f"• **Timestamp:** <t:{hist_timestamp}:F>\n"
             else:
                 description += "**⚠️ 24-Hour Comparison:** No historical data available\n"
@@ -872,8 +872,11 @@ class SupplyDataCollector:
             if current_data:
                 current_timestamp = current_data.get('layer_block_timestamp', 0)
                 historical_data = self.get_data_24_hours_ago(current_timestamp)
-                self.send_daily_summary_alert(current_data, historical_data)
-                logger.info("Daily alert test completed")
+                if historical_data:
+                    self.send_daily_summary_alert(current_data, historical_data)
+                    logger.info("Daily alert test completed successfully")
+                else:
+                    logger.error("Failed to retrieve historical data for 24-hour comparison. Alert not sent.")
             else:
                 logger.error("Failed to collect current data for daily alert test")
             return

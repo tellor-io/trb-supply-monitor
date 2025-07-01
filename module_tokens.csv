@@ -1,0 +1,11 @@
+tellor1zgan0w9a88r2drnqcgm535lmxrm05wg5cc6xsd,ModuleAccount(tips_escrow_pool),7149721261,7149.721261,2025-06-24T14:33:08.767899+00:00
+tellor1fl48vsnmsdzcv85q5d2q4z5ajdha8yu34ds5rz,ModuleAccount(bonded_tokens_pool),9090728959,9090.728959,2025-06-24T14:33:08.767899+00:00
+tellor1tygms3xhhs3yv487phx3dw4a95jn7t7lpdv94k,ModuleAccount(not_bonded_tokens_pool),977166053,977.166053,2025-06-24T14:33:08.767899+00:00
+tellor1zlefkpe3g0vvm9a4h0jf9000lmqutlh9mp9v2w,ModuleAccount(bridge),0,0.0,2025-06-24T14:33:08.767899+00:00
+tellor10d07y265gmmuvt4z0w9aw880jnsr700j6527vx,ModuleAccount(gov),0,0.0,2025-06-24T14:33:08.767899+00:00
+tellor1364k288xd4r0gxlnk2rve5fm3qxamdtted7v4t,ModuleAccount(time_based_rewards),0,0.0,2025-06-24T14:33:08.767899+00:00
+tellor1jgp27m8fykex4e4jtt0l7ze8q528ux2l38pvhu,ModuleAccount(oracle),25323201,25.323201,2025-06-24T14:33:08.767899+00:00
+tellor1jv65s3grqf6v6jl3dp4t6c9t9rk99cd88fa8n2,ModuleAccount(distribution),2632347000,2632.347,2025-06-24T14:33:08.767899+00:00
+tellor1et4y07sgf2z39wlptxmfu5nvhrjwhjgdsyp5qj,ModuleAccount(dispute),9217161,9.217161,2025-06-24T14:33:08.767899+00:00
+tellor1m3h30wlvsf8llruxtpukdvsy0km2kum8g87ra4,ModuleAccount(mint),0,0.0,2025-06-24T14:33:08.767899+00:00
+tellor17xpfvakm2amg962yls6f84z3kell8c5ls06m3g,ModuleAccount(fee_collector),80,8e-05,2025-06-24T14:33:08.767899+00:00
