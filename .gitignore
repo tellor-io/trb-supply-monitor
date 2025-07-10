@@ -5,3 +5,16 @@ active_addresses.csv
 supply_data_all.csv
 1.json
 accounts_example.json
+uv.lock
+__pycache__/
+.venv/
+.DS_Store
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+tellor_balances.db
+app.log
+uv.lock
+src/tellor_supply_analytics/__pycache__/supply_collector.cpython-312.pyc
