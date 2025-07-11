@@ -245,6 +245,21 @@ class EnhancedActiveBalancesCollector:
         logger.info(f"Extracted {len(addresses)} unique addresses")
         return addresses
     
+    def get_all_addresses(self) -> List[Tuple[str, str]]:
+        """
+        Get all addresses from Tellor Layer.
+        
+        This is a convenience method that combines get_all_accounts() and extract_addresses().
+        
+        Returns:
+            List of tuples (address, account_type)
+        """
+        accounts = self.get_all_accounts()
+        if not accounts:
+            return []
+        
+        return self.extract_addresses(accounts)
+    
     def get_address_balance(self, address: str) -> Tuple[int, float]:
         """
         Get the loya balance for a specific address.

@@ -329,36 +329,38 @@ class UnifiedDataCollector:
         target_time = datetime.fromtimestamp(eth_timestamp, tz=timezone.utc)
         current_time = datetime.now(timezone.utc)
         
-        # If the timestamp is recent (within 2 hours), collect current balances
+        # Calculate time difference
         time_diff = abs((current_time - target_time).total_seconds())
+        
+        # For recent timestamps (within 2 hours), collect current balances
         if time_diff <= 2 * 3600:
             logger.info(f"Collecting current balance data for recent ETH timestamp {eth_timestamp}")
-            
-            # Get active addresses
-            addresses = self.balance_collector.get_all_addresses()
-            if not addresses:
-                logger.error("Failed to get active addresses")
-                return None
-            
-            # Collect balances
-            addresses_with_balances = []
-            for i, (address, account_type) in enumerate(addresses, 1):
-                if i % 100 == 0:
-                    logger.info(f"Collected balances for {i}/{len(addresses)} addresses...")
-                
-                loya_balance, loya_balance_trb = self.balance_collector.get_address_balance(address)
-                addresses_with_balances.append((address, account_type, loya_balance, loya_balance_trb))
-                
-                # Small delay to avoid overwhelming the RPC
-                time.sleep(0.01)
-            
-            logger.info(f"Collected balances for {len(addresses_with_balances)} addresses")
-            return addresses_with_balances
+        else:
+            # For historical timestamps, use current balance data as approximation
+            # Note: True historical balance collection would require querying layer state at specific heights
+            logger.info(f"ETH timestamp {eth_timestamp} is historical ({target_time}), "
+                       f"using current balance data as approximation")
         
-        # For historical balance data, we'd need to implement historical balance collection
-        logger.warning(f"ETH timestamp {eth_timestamp} is historical, "
-                      f"historical balance collection not yet implemented")
-        return None
+        # Get active addresses
+        addresses = self.balance_collector.get_all_addresses()
+        if not addresses:
+            logger.error("Failed to get active addresses")
+            return None
+        
+        # Collect balances
+        addresses_with_balances = []
+        for i, (address, account_type) in enumerate(addresses, 1):
+            if i % 100 == 0:
+                logger.info(f"Collected balances for {i}/{len(addresses)} addresses...")
+            
+            loya_balance, loya_balance_trb = self.balance_collector.get_address_balance(address)
+            addresses_with_balances.append((address, account_type, loya_balance, loya_balance_trb))
+            
+            # Small delay to avoid overwhelming the RPC
+            time.sleep(0.01)
+        
+        logger.info(f"Collected balances for {len(addresses_with_balances)} addresses")
+        return addresses_with_balances
     
     def collect_unified_snapshot(self, eth_block_number: int, eth_timestamp: int) -> bool:
         """
