@@ -18,3 +18,5 @@ tellor_balances.db
 app.log
 uv.lock
 src/tellor_supply_analytics/__pycache__/supply_collector.cpython-312.pyc
+*cpython
+src/tellor_supply_analytics/__pycache__/supply_collector.cpython-312.pyc

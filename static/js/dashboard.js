@@ -95,12 +95,36 @@ class BalanceDashboard {
             
             <div class="stat-card clickable">
                 <div class="stat-icon">
-                    <i class="fas fa-chart-line"></i>
+                    <i class="fas fa-coins"></i>
+                </div>
+                <div class="stat-content">
+                    <div class="stat-number">${this.formatNumber(data.free_floating_trb, 2)} TRB</div>
+                    <div class="stat-title">Free Floating TRB</div>
+                </div>
+            </div>
+            
+            <div class="stat-card clickable" style="position: relative;">
+                <div class="stat-icon">
+                    <i class="fas fa-exchange-alt"></i>
                 </div>
                 <div class="stat-content">
                     <div class="stat-number">${this.formatNumber(data.total_trb_balance, 2)} TRB</div>
-                    <div class="stat-title">Total TRB Balance</div>
-                    <div class="stat-subtitle">Converted amount</div>
+                    <div class="stat-title">Layer Total Supply</div>
+                    <div class="stat-subtitle" style="font-size: 0.7rem; line-height: 1.2;">
+                        Bridge: ${this.formatNumber(data.bridge_balance_trb, 2)} TRB<br>
+                        ${this.calculateSupplyDifference(data.total_trb_balance, data.bridge_balance_trb)}
+                    </div>
+                </div>
+            </div>
+            
+            <div class="stat-card clickable">
+                <div class="stat-icon">
+                    <i class="fas fa-cube"></i>
+                </div>
+                <div class="stat-content">
+                    <div class="stat-number">${this.formatNumber(data.layer_block_height)}</div>
+                    <div class="stat-title">Block Height</div>
+                    <div class="stat-subtitle">Height of Data Shown</div>
                 </div>
             </div>
         `;
@@ -159,6 +183,19 @@ class BalanceDashboard {
             minimumFractionDigits: decimals,
             maximumFractionDigits: decimals 
         });
+    }
+    
+    calculateSupplyDifference(totalSupply, bridgeBalance) {
+        const difference = totalSupply - bridgeBalance;
+        const percentage = ((difference / totalSupply) * 100);
+        
+        if (difference > 0) {
+            return `Native: ${this.formatNumber(difference, 2)} TRB (${percentage.toFixed(1)}%)`;
+        } else if (difference < 0) {
+            return `Difference: ${this.formatNumber(Math.abs(difference), 2)}`;
+        } else {
+            return `Balanced: 0.00 TRB (0.0%)`;
+        }
     }
     
     truncateAddress(address) {

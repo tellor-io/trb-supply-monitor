@@ -65,19 +65,43 @@ class BalancesDatabase:
                     addresses_with_balance INTEGER NOT NULL,
                     total_loya_balance INTEGER NOT NULL,
                     total_trb_balance REAL NOT NULL,
+                    bridge_balance_trb REAL DEFAULT 0.0,
+                    layer_block_height INTEGER DEFAULT 0,
+                    free_floating_trb REAL DEFAULT 0.0,
                     status TEXT NOT NULL DEFAULT 'completed',
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
             ''')
+            
+            # Add new columns to existing table if they don't exist (for backward compatibility)
+            try:
+                conn.execute('ALTER TABLE collection_runs ADD COLUMN bridge_balance_trb REAL DEFAULT 0.0')
+            except sqlite3.OperationalError:
+                pass  # Column already exists
+            
+            try:
+                conn.execute('ALTER TABLE collection_runs ADD COLUMN layer_block_height INTEGER DEFAULT 0')
+            except sqlite3.OperationalError:
+                pass  # Column already exists
+                
+            try:
+                conn.execute('ALTER TABLE collection_runs ADD COLUMN free_floating_trb REAL DEFAULT 0.0')
+            except sqlite3.OperationalError:
+                pass  # Column already exists
         
         logger.info(f"Database initialized: {self.db_path}")
     
-    def save_snapshot(self, addresses_with_balances: List[Tuple[str, str, int, float]]):
+    def save_snapshot(self, addresses_with_balances: List[Tuple[str, str, int, float]], 
+                      bridge_balance_trb: float = 0.0, layer_block_height: int = 0, 
+                      free_floating_trb: float = 0.0):
         """
         Save a complete balance snapshot to the database.
         
         Args:
             addresses_with_balances: List of tuples (address, account_type, loya_balance, loya_balance_trb)
+            bridge_balance_trb: Bridge balance in TRB
+            layer_block_height: Tellor Layer block height
+            free_floating_trb: Free floating TRB calculated from addresses
         """
         snapshot_time = datetime.now(timezone.utc)
         
@@ -96,14 +120,17 @@ class BalancesDatabase:
             total_loya_balance = sum(loya for _, _, loya, _ in addresses_with_balances)
             total_trb_balance = sum(trb for _, _, _, trb in addresses_with_balances)
             
-            # Insert collection run record
+            # Insert collection run record with additional data
             conn.execute('''
                 INSERT INTO collection_runs 
-                (run_time, total_addresses, addresses_with_balance, total_loya_balance, total_trb_balance)
-                VALUES (?, ?, ?, ?, ?)
-            ''', (snapshot_time, total_addresses, addresses_with_balance, total_loya_balance, total_trb_balance))
+                (run_time, total_addresses, addresses_with_balance, total_loya_balance, total_trb_balance,
+                 bridge_balance_trb, layer_block_height, free_floating_trb)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ''', (snapshot_time, total_addresses, addresses_with_balance, total_loya_balance, total_trb_balance,
+                  bridge_balance_trb, layer_block_height, free_floating_trb))
         
-        logger.info(f"Saved snapshot with {total_addresses} addresses at {snapshot_time}")
+        logger.info(f"Saved snapshot with {total_addresses} addresses, block height {layer_block_height}, "
+                   f"bridge balance {bridge_balance_trb:.2f} TRB, free floating {free_floating_trb:.2f} TRB at {snapshot_time}")
     
     def get_latest_snapshot(self) -> Dict:
         """Get summary of the latest snapshot."""

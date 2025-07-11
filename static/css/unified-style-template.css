@@ -239,6 +239,8 @@ h4 { font-size: 1rem; color: var(--text-tertiary); }
     box-shadow: var(--shadow-sm);
     transition: all var(--transition-fast);
     border-radius: 4px;
+    min-width: 300px;
+    width: 100%;
 }
 
 .stat-card:hover {
@@ -275,11 +277,12 @@ h4 { font-size: 1rem; color: var(--text-tertiary); }
 }
 
 .stat-number {
-    font-size: 2rem;
+    font-size: 1.5rem;
     font-weight: 700;
     color: var(--text-primary);
     line-height: 1;
     text-shadow: 0 0 10px rgba(0, 255, 136, 0.5);
+    white-space: nowrap;
 }
 
 .stat-title {
@@ -288,16 +291,18 @@ h4 { font-size: 1rem; color: var(--text-tertiary); }
     font-weight: 500;
     text-transform: uppercase;
     letter-spacing: 0.5px;
+    white-space: nowrap;
 }
 
 .stat-subtitle {
     color: var(--text-tertiary);
-    font-size: 0.75rem;
+    font-size: 0.875rem;
     font-weight: 400;
     text-transform: none;
     letter-spacing: 0.25px;
     margin-top: var(--spacing-xs);
     opacity: 0.8;
+    line-height: 1.3;
 }
 
 /* ========================================
@@ -594,8 +599,8 @@ h4 { font-size: 1rem; color: var(--text-tertiary); }
 .grid-cols-3 { grid-template-columns: repeat(3, 1fr); }
 .grid-cols-4 { grid-template-columns: repeat(4, 1fr); }
 
-.grid-auto-fit { grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); }
-.grid-auto-fill { grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); }
+.grid-auto-fit { grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); }
+.grid-auto-fill { grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); }
 
 /* Gap utilities */
 .gap-xs { gap: var(--spacing-xs); }

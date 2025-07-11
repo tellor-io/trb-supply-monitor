@@ -14,19 +14,32 @@ import json
 import requests
 import time
 import logging
+import subprocess
 from datetime import datetime, timezone
 from typing import Dict, List, Optional, Tuple
 from pathlib import Path
 
+# Web3 imports for bridge balance
+from web3 import Web3
+try:
+    from dotenv import load_dotenv
+except ImportError:
+    def load_dotenv() -> bool:
+        return True
+
 # Local imports
 from .database import BalancesDatabase
 
+# Load environment variables
+load_dotenv()
+
 # Import configuration from supply_collector if needed
 try:
-    from .supply_collector import LAYER_GRPC_URL, logger
+    from .supply_collector import LAYER_GRPC_URL, logger, TELLOR_LAYER_RPC_URL
 except ImportError:
     # Fallback configuration if import fails
     LAYER_GRPC_URL = os.getenv('LAYER_GRPC_URL', 'http://node-palmito.tellorlayer.com')
+    TELLOR_LAYER_RPC_URL = os.getenv('TELLOR_LAYER_RPC_URL', 'https://node-palmito.tellorlayer.com/rpc/')
     
     # Configure logging
     logging.basicConfig(
@@ -40,6 +53,22 @@ CSV_FILE = 'active_addresses.csv'
 CSV_HEADERS = ['address', 'account_type', 'loya_balance', 'loya_balance_trb', 'last_updated']
 REQUEST_TIMEOUT = 30
 REQUEST_DELAY = 0.1  # Delay between requests to avoid overwhelming the API
+
+# Ethereum/Bridge Configuration
+ETHEREUM_RPC_URL = os.getenv('ETHEREUM_RPC_URL', 'https://rpc.sepolia.org')
+SEPOLIA_TRB_CONTRACT = os.getenv('SEPOLIA_TRB_CONTRACT', '0x80fc34a2f9FfE86F41580F47368289C402DEc660')
+SEPOLIA_BRIDGE_CONTRACT = os.getenv('SEPOLIA_BRIDGE_CONTRACT', '0x5acb5977f35b1A91C4fE0F4386eB669E046776F2')
+
+# ERC20 ABI for balanceOf function
+ERC20_ABI = [
+    {
+        "constant": True,
+        "inputs": [{"name": "_owner", "type": "address"}],
+        "name": "balanceOf",
+        "outputs": [{"name": "balance", "type": "uint256"}],
+        "type": "function"
+    }
+]
 
 
 class EnhancedActiveBalancesCollector:
@@ -59,6 +88,7 @@ class EnhancedActiveBalancesCollector:
         self.accounts_endpoint = f"{self.base_url}:1317/cosmos/auth/v1beta1/accounts"
         self.balance_endpoint_template = f"{self.base_url}:1317/cosmos/bank/v1beta1/balances/{{}}"
         self.session = requests.Session()
+        self.layerd_path = './layerd'
         
         # Initialize database
         self.db = BalancesDatabase(db_path)
@@ -68,6 +98,32 @@ class EnhancedActiveBalancesCollector:
             'Accept': 'application/json',
             'User-Agent': 'Tellor-Supply-Analytics/1.0'
         })
+        
+        # Initialize Web3 connection for bridge balance
+        try:
+            self.w3 = Web3(Web3.HTTPProvider(ETHEREUM_RPC_URL))
+            if not self.w3.is_connected():
+                logger.warning(f"Failed to connect to Ethereum RPC: {ETHEREUM_RPC_URL}")
+                self.w3 = None
+            else:
+                logger.info(f"Connected to Ethereum RPC: {ETHEREUM_RPC_URL}")
+        except Exception as e:
+            logger.error(f"Error connecting to Ethereum RPC: {e}")
+            self.w3 = None
+            
+        # Initialize TRB contract
+        if self.w3:
+            try:
+                self.trb_contract = self.w3.eth.contract(
+                    address=Web3.to_checksum_address(SEPOLIA_TRB_CONTRACT),
+                    abi=ERC20_ABI
+                )
+                logger.info(f"Initialized TRB contract: {SEPOLIA_TRB_CONTRACT}")
+            except Exception as e:
+                logger.error(f"Error initializing TRB contract: {e}")
+                self.trb_contract = None
+        else:
+            self.trb_contract = None
         
         if self.use_csv:
             self.initialize_csv()
@@ -227,6 +283,116 @@ class EnhancedActiveBalancesCollector:
             logger.warning(f"Error parsing balance response for {address}: {e}")
             return 0, 0.0
     
+    def run_layerd_command(self, cmd_args: List[str]) -> Optional[Dict]:
+        """Run a layerd command and return JSON output."""
+        try:
+            cmd = [self.layerd_path] + cmd_args
+            logger.debug(f"Running command: {' '.join(cmd)}")
+            
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=30
+            )
+            
+            if result.returncode != 0:
+                error_msg = result.stderr.strip()
+                logger.error(f"Command failed: {error_msg}")
+                return None
+            
+            # Parse JSON output
+            try:
+                return json.loads(result.stdout)
+            except json.JSONDecodeError as e:
+                logger.error(f"Failed to parse JSON output: {e}")
+                return None
+                
+        except subprocess.TimeoutExpired:
+            logger.error("Command timed out")
+            return None
+        except Exception as e:
+            logger.error(f"Error running command: {e}")
+            return None
+    
+    def get_current_height(self) -> Optional[int]:
+        """Get the current block height from Tellor Layer using layerd status."""
+        logger.info("Getting current block height from Tellor Layer")
+        
+        cmd_args = [
+            'status',
+            '--output', 'json',
+            '--node', TELLOR_LAYER_RPC_URL
+        ]
+        
+        result = self.run_layerd_command(cmd_args)
+        if not result:
+            return None
+            
+        try:
+            # Extract latest block height from sync_info
+            latest_height = result['sync_info']['latest_block_height']
+            height = int(latest_height)
+            
+            logger.info(f"Current Tellor Layer height: {height}")
+            return height
+            
+        except (KeyError, ValueError) as e:
+            logger.error(f"Error parsing current height: {e}")
+            return None
+    
+    def get_bridge_balance(self) -> Optional[float]:
+        """Get TRB balance in bridge contract."""
+        if not self.w3 or not self.trb_contract:
+            logger.warning("Web3 or TRB contract not initialized, returning 0 for bridge balance")
+            return 0.0
+            
+        try:
+            # Get bridge balance
+            balance = self.trb_contract.functions.balanceOf(
+                Web3.to_checksum_address(SEPOLIA_BRIDGE_CONTRACT)
+            ).call()
+            
+            # Convert from wei to TRB (18 decimals)
+            balance_trb = balance / (10 ** 18)
+            
+            logger.info(f"Bridge balance: {balance_trb:.6f} TRB")
+            return balance_trb
+            
+        except Exception as e:
+            logger.error(f"Error getting bridge balance: {e}")
+            return 0.0
+    
+    def calculate_free_floating_trb(self, addresses_with_balances: List[Tuple[str, str, int, float]]) -> float:
+        """
+        Calculate free floating TRB from active addresses data.
+        Free floating TRB = Total supply - Total ModuleAccount balances
+        
+        Args:
+            addresses_with_balances: List of tuples (address, account_type, loya_balance, loya_balance_trb)
+            
+        Returns:
+            Free floating TRB amount
+        """
+        # Calculate total TRB supply from all addresses
+        total_supply_trb = sum(trb for _, _, _, trb in addresses_with_balances)
+        
+        # Calculate total ModuleAccount balances
+        module_account_balances_trb = sum(
+            trb for _, account_type, _, trb in addresses_with_balances 
+            if account_type.startswith('ModuleAccount')
+        )
+        
+        # Free floating = Total supply - ModuleAccount balances
+        free_floating_trb = total_supply_trb - module_account_balances_trb
+        
+        logger.info(f"Free floating TRB calculation:")
+        logger.info(f"  Total supply: {total_supply_trb:.6f} TRB")
+        logger.info(f"  ModuleAccount balances: {module_account_balances_trb:.6f} TRB")
+        logger.info(f"  Free floating: {free_floating_trb:.6f} TRB")
+        
+        return free_floating_trb
+    
     def collect_and_save_balances(self, addresses: List[Tuple[str, str]]):
         """
         Collect balances for all addresses and save to both CSV and database.
@@ -252,9 +418,31 @@ class EnhancedActiveBalancesCollector:
             # Small delay between balance requests
             time.sleep(REQUEST_DELAY)
         
-        # Save to database
-        self.db.save_snapshot(addresses_with_balances)
-        logger.info(f"Saved {len(addresses_with_balances)} addresses to database")
+        # Collect additional data
+        logger.info("Collecting additional blockchain data...")
+        
+        # Get current block height
+        current_height = self.get_current_height()
+        if current_height is None:
+            logger.warning("Failed to get current block height, using 0")
+            current_height = 0
+        
+        # Get bridge balance
+        bridge_balance = self.get_bridge_balance()
+        if bridge_balance is None:
+            bridge_balance = 0.0
+        
+        # Calculate free floating TRB
+        free_floating_trb = self.calculate_free_floating_trb(addresses_with_balances)
+        
+        # Save to database with additional data
+        self.db.save_snapshot(
+            addresses_with_balances, 
+            bridge_balance_trb=bridge_balance,
+            layer_block_height=current_height,
+            free_floating_trb=free_floating_trb
+        )
+        logger.info(f"Saved {len(addresses_with_balances)} addresses to database with additional data")
         
         # Save to CSV if enabled
         if self.use_csv:
@@ -324,9 +512,12 @@ class EnhancedActiveBalancesCollector:
             if summary:
                 logger.info("=== COLLECTION SUMMARY ===")
                 logger.info(f"Collection time: {summary.get('run_time')}")
+                logger.info(f"Block height: {summary.get('layer_block_height', 0):,}")
                 logger.info(f"Total addresses: {summary.get('total_addresses')}")
                 logger.info(f"Addresses with balance: {summary.get('addresses_with_balance')}")
                 logger.info(f"Total balance: {summary.get('total_loya_balance'):,} loya ({summary.get('total_trb_balance'):,.6f} TRB)")
+                logger.info(f"Bridge balance: {summary.get('bridge_balance_trb', 0):,.6f} TRB")
+                logger.info(f"Free floating TRB: {summary.get('free_floating_trb', 0):,.6f} TRB")
             
             return True
             
