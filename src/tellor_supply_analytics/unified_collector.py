@@ -332,35 +332,54 @@ class UnifiedDataCollector:
         # Calculate time difference
         time_diff = abs((current_time - target_time).total_seconds())
         
-        # For recent timestamps (within 2 hours), collect current balances
-        if time_diff <= 2 * 3600:
-            logger.info(f"Collecting current balance data for recent ETH timestamp {eth_timestamp}")
-        else:
-            # For historical timestamps, use current balance data as approximation
-            # Note: True historical balance collection would require querying layer state at specific heights
-            logger.info(f"ETH timestamp {eth_timestamp} is historical ({target_time}), "
-                       f"using current balance data as approximation")
-        
-        # Get active addresses
+        # Get active addresses first
         addresses = self.balance_collector.get_all_addresses()
         if not addresses:
             logger.error("Failed to get active addresses")
             return None
         
-        # Collect balances
-        addresses_with_balances = []
-        for i, (address, account_type) in enumerate(addresses, 1):
-            if i % 100 == 0:
-                logger.info(f"Collected balances for {i}/{len(addresses)} addresses...")
+        # For recent timestamps (within 2 hours), collect current balances
+        if time_diff <= 2 * 3600:
+            logger.info(f"Collecting current balance data for recent ETH timestamp {eth_timestamp}")
             
-            loya_balance, loya_balance_trb = self.balance_collector.get_address_balance(address)
-            addresses_with_balances.append((address, account_type, loya_balance, loya_balance_trb))
+            # Collect current balances
+            addresses_with_balances = []
+            for i, (address, account_type) in enumerate(addresses, 1):
+                if i % 100 == 0:
+                    logger.info(f"Collected balances for {i}/{len(addresses)} addresses...")
+                
+                loya_balance, loya_balance_trb = self.balance_collector.get_address_balance(address)
+                addresses_with_balances.append((address, account_type, loya_balance, loya_balance_trb))
+                
+                # Small delay to avoid overwhelming the RPC
+                time.sleep(0.01)
             
-            # Small delay to avoid overwhelming the RPC
-            time.sleep(0.01)
+            logger.info(f"Collected current balances for {len(addresses_with_balances)} addresses")
+            return addresses_with_balances
         
-        logger.info(f"Collected balances for {len(addresses_with_balances)} addresses")
-        return addresses_with_balances
+        # For historical timestamps, find the corresponding Tellor Layer block and query balances at that height
+        logger.info(f"ETH timestamp {eth_timestamp} is historical ({target_time}), "
+                   f"finding corresponding Tellor Layer block for balance collection...")
+        
+        try:
+            # Find the corresponding Tellor Layer block for this Ethereum timestamp
+            layer_block_info = find_layer_block_for_eth_timestamp(eth_timestamp)
+            if layer_block_info is None:
+                logger.warning(f"Could not find corresponding Tellor Layer block for ETH timestamp {eth_timestamp}")
+                return None
+            
+            layer_height, layer_time, layer_timestamp = layer_block_info
+            logger.info(f"Found Tellor Layer block {layer_height} at {layer_time} for balance collection")
+            
+            # Collect historical balances at the specific height
+            addresses_with_balances = self.balance_collector.collect_balances_at_height(addresses, layer_height)
+            
+            logger.info(f"Collected historical balances for {len(addresses_with_balances)} addresses at height {layer_height}")
+            return addresses_with_balances
+            
+        except Exception as e:
+            logger.error(f"Error collecting historical balance data for ETH timestamp {eth_timestamp}: {e}")
+            return None
     
     def collect_unified_snapshot(self, eth_block_number: int, eth_timestamp: int) -> bool:
         """

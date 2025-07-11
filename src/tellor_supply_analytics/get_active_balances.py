@@ -260,16 +260,51 @@ class EnhancedActiveBalancesCollector:
         
         return self.extract_addresses(accounts)
     
-    def get_address_balance(self, address: str) -> Tuple[int, float]:
+    def collect_balances_at_height(self, addresses: List[Tuple[str, str]], height: int) -> List[Tuple[str, str, int, float]]:
         """
-        Get the loya balance for a specific address.
+        Collect balances for all addresses at a specific block height.
+        
+        Args:
+            addresses: List of tuples (address, account_type)
+            height: Block height to query at
+            
+        Returns:
+            List of tuples (address, account_type, loya_balance, loya_balance_trb)
+        """
+        logger.info(f"Collecting balances for {len(addresses)} addresses at height {height}")
+        
+        addresses_with_balances = []
+        
+        for i, (address, account_type) in enumerate(addresses, 1):
+            if i % 10 == 0:
+                logger.info(f"Processed {i}/{len(addresses)} addresses at height {height}...")
+            
+            # Get historical balance for this address at the specified height
+            loya_balance, loya_balance_trb = self.get_address_balance_at_height(address, height)
+            addresses_with_balances.append((address, account_type, loya_balance, loya_balance_trb))
+            
+            # Small delay between balance requests to avoid overwhelming the RPC
+            time.sleep(REQUEST_DELAY)
+        
+        logger.info(f"Collected historical balances for {len(addresses_with_balances)} addresses at height {height}")
+        return addresses_with_balances
+    
+    def get_address_balance(self, address: str, height: Optional[int] = None) -> Tuple[int, float]:
+        """
+        Get the loya balance for a specific address at a specific height.
         
         Args:
             address: The address to query
+            height: Block height to query (None for current)
             
         Returns:
             Tuple of (loya_balance, loya_balance_trb)
         """
+        # For historical queries, use layerd CLI
+        if height is not None:
+            return self.get_address_balance_at_height(address, height)
+        
+        # For current queries, use REST API (faster)
         try:
             url = self.balance_endpoint_template.format(address)
             
@@ -296,6 +331,48 @@ class EnhancedActiveBalancesCollector:
             return 0, 0.0
         except (json.JSONDecodeError, ValueError) as e:
             logger.warning(f"Error parsing balance response for {address}: {e}")
+            return 0, 0.0
+    
+    def get_address_balance_at_height(self, address: str, height: int) -> Tuple[int, float]:
+        """
+        Get the loya balance for a specific address at a specific block height.
+        
+        Args:
+            address: The address to query
+            height: Block height to query
+            
+        Returns:
+            Tuple of (loya_balance, loya_balance_trb)
+        """
+        try:
+            cmd_args = [
+                'query', 'bank', 'balances', address,
+                '--height', str(height),
+                '--output', 'json',
+                '--node', TELLOR_LAYER_RPC_URL
+            ]
+            
+            result = self.run_layerd_command(cmd_args)
+            if not result:
+                logger.warning(f"Failed to get balance for {address} at height {height}")
+                return 0, 0.0
+            
+            balances = result.get('balances', [])
+            
+            # Find loya balance
+            loya_balance = 0
+            for balance in balances:
+                if balance.get('denom') == 'loya':
+                    loya_balance = int(balance.get('amount', 0))
+                    break
+            
+            # Convert loya to TRB (assuming 6 decimal places)
+            loya_balance_trb = loya_balance / (10 ** 6)
+            
+            return loya_balance, loya_balance_trb
+            
+        except Exception as e:
+            logger.warning(f"Error fetching balance for {address} at height {height}: {e}")
             return 0, 0.0
     
     def run_layerd_command(self, cmd_args: List[str]) -> Optional[Dict]:
