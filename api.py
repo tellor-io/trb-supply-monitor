@@ -15,7 +15,7 @@ from pathlib import Path
 
 # Local imports
 from src.tellor_supply_analytics.database import BalancesDatabase
-from src.tellor_supply_analytics.get_active_balances_enhanced import EnhancedActiveBalancesCollector
+from src.tellor_supply_analytics.get_active_balances import EnhancedActiveBalancesCollector
 
 # Configure logging
 logging.basicConfig(

@@ -15,7 +15,7 @@ from pathlib import Path
 # Add src to path
 sys.path.insert(0, str(Path(__file__).parent / 'src'))
 
-from tellor_supply_analytics.get_active_balances_enhanced import EnhancedActiveBalancesCollector
+from tellor_supply_analytics.get_active_balances import EnhancedActiveBalancesCollector
 from tellor_supply_analytics.database import BalancesDatabase
 
 # Configure logging with file output

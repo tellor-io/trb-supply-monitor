@@ -73,6 +73,42 @@ class BalancesDatabase:
                 )
             ''')
             
+            # Create supply data table for supply collector data
+            conn.execute('''
+                CREATE TABLE IF NOT EXISTS supply_data (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    collection_time TIMESTAMP NOT NULL,
+                    eth_block_number INTEGER,
+                    eth_block_timestamp INTEGER,
+                    bridge_balance_trb REAL,
+                    layer_block_height INTEGER,
+                    layer_block_timestamp INTEGER,
+                    layer_total_supply_trb REAL,
+                    not_bonded_tokens REAL,
+                    bonded_tokens REAL,
+                    free_floating_trb REAL,
+                    collection_run_id INTEGER,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (collection_run_id) REFERENCES collection_runs (id)
+                )
+            ''')
+            
+            # Create indexes for supply data table
+            conn.execute('''
+                CREATE INDEX IF NOT EXISTS idx_supply_collection_time 
+                ON supply_data (collection_time)
+            ''')
+            
+            conn.execute('''
+                CREATE INDEX IF NOT EXISTS idx_supply_layer_block_height 
+                ON supply_data (layer_block_height)
+            ''')
+            
+            conn.execute('''
+                CREATE INDEX IF NOT EXISTS idx_supply_collection_run_id 
+                ON supply_data (collection_run_id)
+            ''')
+            
             # Add new columns to existing table if they don't exist (for backward compatibility)
             try:
                 conn.execute('ALTER TABLE collection_runs ADD COLUMN bridge_balance_trb REAL DEFAULT 0.0')
@@ -131,6 +167,122 @@ class BalancesDatabase:
         
         logger.info(f"Saved snapshot with {total_addresses} addresses, block height {layer_block_height}, "
                    f"bridge balance {bridge_balance_trb:.2f} TRB, free floating {free_floating_trb:.2f} TRB at {snapshot_time}")
+    
+    def save_supply_data(self, supply_data: Dict, collection_run_id: Optional[int] = None) -> int:
+        """
+        Save supply data to the database.
+        
+        Args:
+            supply_data: Dictionary containing supply metrics
+            collection_run_id: Optional ID of related collection run
+            
+        Returns:
+            The ID of the inserted supply data record
+        """
+        collection_time = datetime.now(timezone.utc)
+        
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.execute('''
+                INSERT INTO supply_data 
+                (collection_time, eth_block_number, eth_block_timestamp, bridge_balance_trb,
+                 layer_block_height, layer_block_timestamp, layer_total_supply_trb,
+                 not_bonded_tokens, bonded_tokens, free_floating_trb, collection_run_id)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ''', (
+                collection_time,
+                supply_data.get('eth_block_number'),
+                supply_data.get('eth_block_timestamp'),
+                supply_data.get('bridge_balance_trb'),
+                supply_data.get('layer_block_height'),
+                supply_data.get('layer_block_timestamp'),
+                supply_data.get('layer_total_supply_trb'),
+                supply_data.get('not_bonded_tokens'),
+                supply_data.get('bonded_tokens'),
+                supply_data.get('free_floating_trb'),
+                collection_run_id
+            ))
+            
+            supply_data_id = cursor.lastrowid
+            if supply_data_id is None:
+                raise RuntimeError("Failed to get ID for inserted supply data record")
+        
+        logger.info(f"Saved supply data with ID {supply_data_id} at {collection_time}")
+        return supply_data_id
+    
+    def get_latest_supply_data(self) -> Optional[Dict]:
+        """Get the most recent supply data record."""
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.execute('''
+                SELECT * FROM supply_data 
+                ORDER BY collection_time DESC 
+                LIMIT 1
+            ''')
+            
+            row = cursor.fetchone()
+            if not row:
+                return None
+            
+            columns = [desc[0] for desc in cursor.description]
+            return dict(zip(columns, row))
+    
+    def get_supply_data_history(self, limit: int = 100) -> List[Dict]:
+        """Get historical supply data records."""
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.execute('''
+                SELECT * FROM supply_data 
+                ORDER BY collection_time DESC 
+                LIMIT ?
+            ''', (limit,))
+            
+            columns = [desc[0] for desc in cursor.description]
+            return [dict(zip(columns, row)) for row in cursor.fetchall()]
+    
+    def get_supply_data_by_timerange(self, start_time: str, end_time: str) -> List[Dict]:
+        """Get supply data within a specific time range."""
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.execute('''
+                SELECT * FROM supply_data 
+                WHERE collection_time BETWEEN ? AND ?
+                ORDER BY collection_time ASC
+            ''', (start_time, end_time))
+            
+            columns = [desc[0] for desc in cursor.description]
+            return [dict(zip(columns, row)) for row in cursor.fetchall()]
+    
+    def get_matched_collection_data(self, collection_run_id: int) -> Dict:
+        """
+        Get both balance snapshot summary and supply data for a specific collection run.
+        
+        Args:
+            collection_run_id: The collection run ID to match
+            
+        Returns:
+            Dictionary containing both balance summary and supply data
+        """
+        with sqlite3.connect(self.db_path) as conn:
+            # Get collection run data
+            cursor = conn.execute('''
+                SELECT * FROM collection_runs WHERE id = ?
+            ''', (collection_run_id,))
+            
+            run_row = cursor.fetchone()
+            if not run_row:
+                return {}
+            
+            run_columns = [desc[0] for desc in cursor.description]
+            result = {'collection_run': dict(zip(run_columns, run_row))}
+            
+            # Get associated supply data
+            cursor = conn.execute('''
+                SELECT * FROM supply_data WHERE collection_run_id = ?
+            ''', (collection_run_id,))
+            
+            supply_row = cursor.fetchone()
+            if supply_row:
+                supply_columns = [desc[0] for desc in cursor.description]
+                result['supply_data'] = dict(zip(supply_columns, supply_row))
+            
+            return result
     
     def get_latest_snapshot(self) -> Dict:
         """Get summary of the latest snapshot."""
