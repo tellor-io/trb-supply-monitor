@@ -299,6 +299,223 @@ async def get_api_status():
         }
 
 
+# ================================
+# UNIFIED TIMELINE ENDPOINTS
+# ================================
+
+@app.get("/api/unified/snapshots")
+async def get_unified_snapshots(
+    limit: int = Query(100, description="Number of snapshots to return", ge=1, le=1000),
+    min_completeness: float = Query(0.0, description="Minimum completeness score (0-1)", ge=0.0, le=1.0)
+):
+    """Get unified snapshots ordered by Ethereum block timestamp."""
+    try:
+        snapshots = db.get_unified_snapshots(limit=limit, min_completeness=min_completeness)
+        
+        return {
+            "snapshots": snapshots,
+            "count": len(snapshots),
+            "limit": limit,
+            "min_completeness": min_completeness
+        }
+    except Exception as e:
+        logger.error(f"Error getting unified snapshots: {e}")
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
+@app.get("/api/unified/snapshot/{eth_timestamp}")
+async def get_unified_snapshot_by_timestamp(eth_timestamp: int):
+    """Get a specific unified snapshot by Ethereum block timestamp."""
+    try:
+        snapshot = db.get_unified_snapshot_by_eth_timestamp(eth_timestamp)
+        if not snapshot:
+            raise HTTPException(status_code=404, detail="Snapshot not found for this timestamp")
+        
+        return snapshot
+    except Exception as e:
+        logger.error(f"Error getting unified snapshot: {e}")
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
+@app.get("/api/unified/balances/{eth_timestamp}")
+async def get_unified_balances_by_timestamp(
+    eth_timestamp: int,
+    limit: int = Query(1000, description="Number of addresses to return", ge=1, le=5000)
+):
+    """Get all balance records for a specific Ethereum block timestamp."""
+    try:
+        balances = db.get_unified_balances_by_eth_timestamp(eth_timestamp)
+        
+        if not balances:
+            raise HTTPException(status_code=404, detail="No balance data found for this timestamp")
+        
+        # Apply limit
+        if len(balances) > limit:
+            balances = balances[:limit]
+        
+        return {
+            "eth_timestamp": eth_timestamp,
+            "eth_datetime": datetime.fromtimestamp(eth_timestamp).isoformat(),
+            "balances": balances,
+            "count": len(balances),
+            "limit": limit
+        }
+    except Exception as e:
+        logger.error(f"Error getting unified balances: {e}")
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
+@app.get("/api/unified/timeline")
+async def get_unified_timeline(
+    hours_back: int = Query(24, description="Hours of data to include", ge=1, le=168),
+    min_completeness: float = Query(0.5, description="Minimum completeness score", ge=0.0, le=1.0)
+):
+    """Get timeline data for charts - optimized for frontend visualization."""
+    try:
+        # Calculate limit based on hours_back (assume one data point per hour max)
+        limit = hours_back * 2  # Allow for denser data
+        
+        snapshots = db.get_unified_snapshots(limit=limit, min_completeness=min_completeness)
+        
+        if not snapshots:
+            return {
+                "timeline": [],
+                "count": 0,
+                "hours_back": hours_back,
+                "min_completeness": min_completeness
+            }
+        
+        # Filter by time range
+        current_time = datetime.now().timestamp()
+        cutoff_time = current_time - (hours_back * 3600)
+        
+        filtered_snapshots = [
+            s for s in snapshots 
+            if s.get('eth_block_timestamp', 0) >= cutoff_time
+        ]
+        
+        # Transform for frontend charts
+        timeline_data = []
+        for snapshot in filtered_snapshots:
+            timeline_data.append({
+                'timestamp': snapshot.get('eth_block_timestamp'),
+                'datetime': snapshot.get('eth_block_datetime'),
+                'eth_block_number': snapshot.get('eth_block_number'),
+                'bridge_balance_trb': snapshot.get('bridge_balance_trb', 0),
+                'layer_total_supply_trb': snapshot.get('layer_total_supply_trb', 0),
+                'bonded_tokens': snapshot.get('bonded_tokens', 0),
+                'not_bonded_tokens': snapshot.get('not_bonded_tokens', 0),
+                'free_floating_trb': snapshot.get('free_floating_trb', 0),
+                'total_addresses': snapshot.get('total_addresses', 0),
+                'total_trb_balance': snapshot.get('total_trb_balance', 0),
+                'completeness_score': snapshot.get('data_completeness_score', 0)
+            })
+        
+        return {
+            "timeline": timeline_data,
+            "count": len(timeline_data),
+            "hours_back": hours_back,
+            "min_completeness": min_completeness
+        }
+    except Exception as e:
+        logger.error(f"Error getting unified timeline: {e}")
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
+@app.get("/api/unified/summary")
+async def get_unified_summary():
+    """Get summary of unified data collection status."""
+    try:
+        # Get latest unified snapshot
+        snapshots = db.get_unified_snapshots(limit=1, min_completeness=0.0)
+        latest_snapshot = snapshots[0] if snapshots else None
+        
+        # Get collection statistics
+        all_snapshots = db.get_unified_snapshots(limit=1000, min_completeness=0.0)
+        total_snapshots = len(all_snapshots)
+        complete_snapshots = sum(1 for s in all_snapshots if s.get('data_completeness_score', 0) >= 1.0)
+        
+        # Get incomplete snapshots for backfill info
+        incomplete_snapshots = db.get_incomplete_snapshots(min_completeness=1.0)
+        
+        summary = {
+            "latest_snapshot": latest_snapshot,
+            "statistics": {
+                "total_snapshots": total_snapshots,
+                "complete_snapshots": complete_snapshots,
+                "incomplete_snapshots": len(incomplete_snapshots),
+                "completion_rate": complete_snapshots / total_snapshots if total_snapshots > 0 else 0
+            }
+        }
+        
+        if latest_snapshot:
+            summary["latest_eth_datetime"] = latest_snapshot.get('eth_block_datetime')
+            summary["latest_data_age_hours"] = (
+                datetime.now().timestamp() - latest_snapshot.get('eth_block_timestamp', 0)
+            ) / 3600
+        
+        return summary
+        
+    except Exception as e:
+        logger.error(f"Error getting unified summary: {e}")
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
+@app.post("/api/unified/collect")
+async def trigger_unified_collection(
+    hours_back: int = Query(6, description="Hours back to collect", ge=1, le=48),
+    max_blocks: int = Query(20, description="Max blocks to process", ge=1, le=100)
+):
+    """Trigger a unified collection run."""
+    try:
+        logger.info(f"Unified collection triggered via API - hours_back: {hours_back}, max_blocks: {max_blocks}")
+        
+        # Import here to avoid circular dependencies
+        from src.tellor_supply_analytics.unified_collector import UnifiedDataCollector
+        
+        collector = UnifiedDataCollector()
+        processed = collector.run_unified_collection(
+            hours_back=hours_back, 
+            max_blocks=max_blocks
+        )
+        
+        logger.info(f"Unified collection completed: {processed} blocks processed")
+        
+        return {
+            "status": "success",
+            "message": f"Unified collection completed: {processed} blocks processed",
+            "blocks_processed": processed,
+            "hours_back": hours_back
+        }
+        
+    except Exception as e:
+        logger.error(f"Error during unified collection: {e}")
+        raise HTTPException(status_code=500, detail="Unified collection failed")
+
+
+@app.get("/api/unified/incomplete")
+async def get_incomplete_snapshots(
+    limit: int = Query(50, description="Number of incomplete snapshots to return", ge=1, le=200),
+    min_completeness: float = Query(0.8, description="Minimum completeness score", ge=0.0, le=1.0)
+):
+    """Get snapshots with incomplete data that need backfill."""
+    try:
+        incomplete_snapshots = db.get_incomplete_snapshots(min_completeness=min_completeness)
+        
+        if len(incomplete_snapshots) > limit:
+            incomplete_snapshots = incomplete_snapshots[:limit]
+        
+        return {
+            "incomplete_snapshots": incomplete_snapshots,
+            "count": len(incomplete_snapshots),
+            "limit": limit,
+            "min_completeness": min_completeness
+        }
+    except Exception as e:
+        logger.error(f"Error getting incomplete snapshots: {e}")
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
 def signal_handler(signum, frame):
     """Handle shutdown signals."""
     global app_shutdown, collection_thread

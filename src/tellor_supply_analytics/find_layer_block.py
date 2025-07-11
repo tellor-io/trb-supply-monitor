@@ -1,149 +1,86 @@
-# find the block number of the Tellor Layer block that is closest to any random ethereum block
+#!/usr/bin/env python3
+"""
+Find the Tellor Layer block closest to any Ethereum timestamp using binary search.
 
-import json
-import logging
-import subprocess
+This module implements a binary search algorithm to find the Tellor Layer block
+that is closest to a given target timestamp. It uses the Cosmos SDK RPC endpoints
+to query block data and timestamps.
+
+Author: Blockchain Backend Engineering Team
+"""
+
 import os
+import requests
+import logging
 from datetime import datetime, timezone
-from typing import Dict, Optional, Tuple
+from typing import Optional, Tuple
+
+try:
+    from dotenv import load_dotenv
+except ImportError:
+    def load_dotenv() -> bool:
+        return True
+
+# Load environment variables
+load_dotenv()
+
+# Configuration
+TELLOR_LAYER_RPC_URL = os.getenv('TELLOR_LAYER_RPC_URL', 'https://node-palmito.tellorlayer.com/rpc/')
 
 # Configure logging
 logger = logging.getLogger(__name__)
 
-# Configuration from environment variables
-TELLOR_LAYER_RPC_URL = os.getenv('TELLOR_LAYER_RPC_URL', 'https://node-palmito.tellorlayer.com/rpc/')
-
-class LayerBlockFinder:
+class TellorLayerBlockFinder:
     """
-    Finds the Tellor Layer block that is closest to a given Ethereum timestamp.
+    Find Tellor Layer blocks by timestamp using binary search.
     
-    Uses a binary search approach with layerd RPC queries to efficiently find the 
-    closest matching block within a configurable tolerance.
+    This class provides functionality to find the block height H such that:
+    block_time(H) ≤ timestamp and block_time(H+1) > timestamp
+    (i.e., the latest block before or at the given timestamp)
     """
     
-    def __init__(self, layerd_path: str = './layerd', tolerance_seconds: int = 300):
+    def __init__(self, rpc_url: str = TELLOR_LAYER_RPC_URL):
         """
-        Initialize the layer block finder.
+        Initialize the block finder.
         
         Args:
-            layerd_path: Path to the layerd binary
-            tolerance_seconds: Acceptable time difference in seconds (default: 5 minutes)
+            rpc_url: Tellor Layer RPC URL (Cosmos SDK format)
         """
-        self.layerd_path = layerd_path
-        self.tolerance_seconds = tolerance_seconds
-        self._status_cache = None  # Cache status info to avoid repeated calls
-        
-    def run_layerd_command(self, cmd_args: list) -> Optional[Dict]:
-        """Run a layerd command and return JSON output."""
-        try:
-            cmd = [self.layerd_path] + cmd_args
-            logger.debug(f"Running command: {' '.join(cmd)}")
-            
-            result = subprocess.run(
-                cmd,
-                capture_output=True,
-                text=True,
-                timeout=30
-            )
-            
-            if result.returncode != 0:
-                error_msg = result.stderr.strip()
-                logger.error(f"Command failed: {error_msg}")
-                return None
-            
-            # Parse JSON output
-            try:
-                return json.loads(result.stdout)
-            except json.JSONDecodeError as e:
-                logger.error(f"Failed to parse JSON output: {e}")
-                logger.debug(f"Raw output: {result.stdout}")
-                return None
-                
-        except subprocess.TimeoutExpired:
-            logger.error("Command timed out")
-            return None
-        except Exception as e:
-            logger.error(f"Error running command: {e}")
-            return None
+        self.rpc_url = rpc_url.rstrip('/')
+        self.session = requests.Session()
+        self.session.headers.update({
+            'Accept': 'application/json',
+            'User-Agent': 'Tellor-Layer-Block-Finder/1.0'
+        })
     
-    def get_status_info(self) -> Optional[Dict]:
+    def get_block_time(self, height: int) -> Optional[datetime]:
         """
-        Get status information from layerd including current and oldest block info.
+        Get the timestamp of a block at a specific height.
         
+        Args:
+            height: Block height to query
+            
         Returns:
-            Dictionary with current_height, current_timestamp, oldest_height, oldest_timestamp
+            datetime object in UTC or None if failed
         """
-        if self._status_cache:
-            return self._status_cache
-            
-        logger.info("Getting Tellor Layer status information")
-        
-        cmd_args = [
-            'status',
-            '--output', 'json',
-            '--node', TELLOR_LAYER_RPC_URL
-        ]
-        
-        result = self.run_layerd_command(cmd_args)
-        if not result:
-            return None
-            
         try:
-            sync_info = result['sync_info']
+            url = f"{self.rpc_url}/block?height={height}"
+            logger.debug(f"Querying block {height}: {url}")
             
-            # Extract current block info
-            current_height = int(sync_info['latest_block_height'])
-            current_time_str = sync_info['latest_block_time']
+            response = self.session.get(url, timeout=30)
+            response.raise_for_status()
             
-            # Extract oldest block info
-            oldest_height = int(sync_info.get('earliest_block_height', 1))
-            oldest_time_str = sync_info.get('earliest_block_time', current_time_str)
+            data = response.json()
             
-            # Parse timestamps
-            current_timestamp = self._parse_timestamp(current_time_str)
-            oldest_timestamp = self._parse_timestamp(oldest_time_str)
+            # Extract timestamp from block header
+            time_str = data["result"]["block"]["header"]["time"]
             
-            if current_timestamp is None or oldest_timestamp is None:
-                logger.error("Failed to parse timestamps from status")
-                return None
-            
-            status_info = {
-                'current_height': current_height,
-                'current_timestamp': current_timestamp,
-                'oldest_height': oldest_height,
-                'oldest_timestamp': oldest_timestamp
-            }
-            
-            # Calculate average block time
-            if current_height > oldest_height:
-                time_diff = current_timestamp - oldest_timestamp
-                block_diff = current_height - oldest_height
-                avg_block_time = time_diff / block_diff
-                status_info['avg_block_time'] = avg_block_time
-                
-                logger.info(f"Status info: current_height={current_height}, "
-                           f"current_timestamp={current_timestamp}, "
-                           f"oldest_height={oldest_height}, "
-                           f"oldest_timestamp={oldest_timestamp}, "
-                           f"avg_block_time={avg_block_time:.2f}s")
-            else:
-                logger.warning("Cannot calculate average block time: insufficient block range")
-                status_info['avg_block_time'] = 12.0  # Default fallback
-            
-            self._status_cache = status_info
-            return status_info
-            
-        except (KeyError, ValueError) as e:
-            logger.error(f"Error parsing status info: {e}")
-            logger.debug(f"Raw status data: {result}")
-            return None
-    
-    def _parse_timestamp(self, time_str: str) -> Optional[int]:
-        """Parse ISO timestamp string to Unix timestamp."""
-        try:
             # Handle nanosecond precision timestamps by truncating to microseconds
+            # Format: "2025-06-23T17:23:55.344314112Z"
             if '.' in time_str and 'Z' in time_str:
+                # Split at the decimal point
                 date_part, fractional_part = time_str.split('.')
+                # Keep only first 6 digits (microseconds) and add Z back
                 fractional_part = fractional_part.rstrip('Z')
                 if len(fractional_part) > 6:
                     fractional_part = fractional_part[:6]
@@ -151,210 +88,221 @@ class LayerBlockFinder:
             else:
                 time_str_truncated = time_str
             
-            dt = datetime.fromisoformat(time_str_truncated.replace('Z', '+00:00'))
-            return int(dt.timestamp())
+            # Parse ISO timestamp
+            block_time = datetime.fromisoformat(time_str_truncated.replace("Z", "+00:00"))
             
-        except ValueError as e:
-            logger.error(f"Error parsing timestamp '{time_str}': {e}")
+            logger.debug(f"Block {height} timestamp: {block_time}")
+            return block_time
+            
+        except requests.RequestException as e:
+            logger.error(f"Error querying block {height}: {e}")
             return None
-    
-    def get_block_timestamp(self, height: int) -> Optional[int]:
-        """
-        Get the timestamp for a specific block height.
-        
-        Args:
-            height: Block height to query
-            
-        Returns:
-            Unix timestamp of the block, or None if failed
-        """
-        logger.debug(f"Getting timestamp for block height: {height}")
-        
-        cmd_args = [
-            'query', 'block',
-            '--type=height', str(height),
-            '--output', 'json',
-            '--node', TELLOR_LAYER_RPC_URL
-        ]
-        
-        result = self.run_layerd_command(cmd_args)
-        if not result:
-            return None
-            
-        try:
-            block_time = result['header']['time']
-            timestamp = self._parse_timestamp(block_time)
-            
-            if timestamp:
-                logger.debug(f"Block {height} timestamp: {block_time} ({timestamp})")
-            
-            return timestamp
-            
         except (KeyError, ValueError) as e:
-            logger.error(f"Error parsing block timestamp for height {height}: {e}")
+            logger.error(f"Error parsing block {height} timestamp: {e}")
             return None
     
-    def find_closest_block(self, target_timestamp: int, max_iterations: int = 20) -> Optional[Tuple[int, int, int]]:
+    def get_latest_height(self) -> Optional[int]:
         """
-        Find the Tellor Layer block closest to the target Ethereum timestamp.
+        Get the latest block height from the Tellor Layer.
+        
+        Returns:
+            Latest block height or None if failed
+        """
+        try:
+            url = f"{self.rpc_url}/status"
+            logger.debug(f"Querying status: {url}")
+            
+            response = self.session.get(url, timeout=30)
+            response.raise_for_status()
+            
+            data = response.json()
+            height = int(data["result"]["sync_info"]["latest_block_height"])
+            
+            logger.info(f"Latest Tellor Layer height: {height}")
+            return height
+            
+        except requests.RequestException as e:
+            logger.error(f"Error querying latest height: {e}")
+            return None
+        except (KeyError, ValueError) as e:
+            logger.error(f"Error parsing latest height: {e}")
+            return None
+    
+    def find_block_by_timestamp(self, target_time: datetime) -> Optional[int]:
+        """
+        Find the block height H such that block_time(H) ≤ target_time and block_time(H+1) > target_time.
+        
+        Uses binary search algorithm to efficiently find the correct block.
         
         Args:
-            target_timestamp: Target Ethereum block timestamp (Unix)
-            max_iterations: Maximum number of iterations before giving up
+            target_time: Target timestamp (should be timezone-aware)
             
         Returns:
-            Tuple of (block_height, block_timestamp, time_difference) or None if failed
+            Block height at or before the target timestamp, or None if failed
         """
-        logger.info(f"Finding closest Tellor Layer block to timestamp {target_timestamp} "
-                   f"({datetime.fromtimestamp(target_timestamp, tz=timezone.utc)})")
+        logger.info(f"Finding Tellor Layer block for timestamp: {target_time}")
         
-        # Get status information
-        status_info = self.get_status_info()
-        if not status_info:
-            logger.error("Failed to get status information")
+        # Ensure target_time is timezone-aware (UTC)
+        if target_time.tzinfo is None:
+            target_time = target_time.replace(tzinfo=timezone.utc)
+            logger.warning("Target time was naive, assuming UTC")
+        
+        # Get the search range
+        high = self.get_latest_height()
+        if high is None:
+            logger.error("Failed to get latest height")
             return None
         
-        current_height = status_info['current_height']
-        current_timestamp = status_info['current_timestamp']
-        oldest_height = status_info['oldest_height']
-        oldest_timestamp = status_info['oldest_timestamp']
-        avg_block_time = status_info['avg_block_time']
+        low = 1  # Genesis block
         
-        # Check if target timestamp is within available range
-        if target_timestamp > current_timestamp:
-            logger.warning(f"Target timestamp {target_timestamp} is in the future "
-                          f"(current: {current_timestamp})")
-            # Return current block as best available
-            return current_height, current_timestamp, abs(target_timestamp - current_timestamp)
+        logger.info(f"Searching blocks {low} to {high} for timestamp {target_time}")
         
-        if target_timestamp < oldest_timestamp:
-            logger.warning(f"Target timestamp {target_timestamp} is before oldest available "
-                          f"(oldest: {oldest_timestamp})")
-            # Return oldest block as best available
-            return oldest_height, oldest_timestamp, abs(target_timestamp - oldest_timestamp)
-        
-        # Initial guess based on average block time
-        time_diff = target_timestamp - current_timestamp
-        estimated_blocks_diff = int(time_diff / avg_block_time)
-        initial_guess = current_height + estimated_blocks_diff
-        
-        # Ensure initial guess is within bounds
-        initial_guess = max(oldest_height, min(current_height, initial_guess))
-        
-        logger.info(f"Initial guess: block {initial_guess} "
-                   f"(estimated {estimated_blocks_diff} blocks from current)")
-        
-        # Binary search bounds
-        low_height = oldest_height
-        high_height = current_height
-        best_match = None
-        best_diff = float('inf')
-        
-        for iteration in range(max_iterations):
-            # Use initial guess for first iteration, then binary search
-            if iteration == 0:
-                guess_height = initial_guess
-            else:
-                guess_height = (low_height + high_height) // 2
+        # Binary search
+        while low <= high:
+            mid = (low + high) // 2
+            logger.debug(f"Checking block {mid} (range: {low} - {high})")
             
-            # Get timestamp for this height
-            guess_timestamp = self.get_block_timestamp(guess_height)
-            if guess_timestamp is None:
-                logger.warning(f"Failed to get timestamp for height {guess_height}, skipping")
-                # Adjust bounds and continue
-                if guess_height > (low_height + high_height) // 2:
-                    high_height = guess_height - 1
+            mid_time = self.get_block_time(mid)
+            if mid_time is None:
+                logger.warning(f"Failed to get time for block {mid}, skipping")
+                # Try to continue search by adjusting range
+                if mid == low:
+                    low += 1
+                elif mid == high:
+                    high -= 1
                 else:
-                    low_height = guess_height + 1
+                    # Split the search space
+                    high = mid - 1
                 continue
             
-            time_diff = abs(target_timestamp - guess_timestamp)
-            
-            logger.info(f"Iteration {iteration + 1}: height={guess_height}, "
-                       f"timestamp={guess_timestamp}, diff={time_diff}s")
-            
-            # Update best match
-            if time_diff < best_diff:
-                best_diff = time_diff
-                best_match = (guess_height, guess_timestamp, time_diff)
-            
-            # Check if we're within tolerance
-            if time_diff <= self.tolerance_seconds:
-                logger.info(f"Found block within tolerance: height={guess_height}, "
-                           f"timestamp={guess_timestamp}, diff={time_diff}s")
-                return guess_height, guess_timestamp, time_diff
-            
-            # Adjust binary search bounds
-            if guess_timestamp < target_timestamp:
-                low_height = guess_height + 1
+            if mid_time < target_time:
+                low = mid + 1
+            elif mid_time > target_time:
+                high = mid - 1
             else:
-                high_height = guess_height - 1
-            
-            # Check if search space is exhausted
-            if low_height > high_height:
-                logger.info("Search space exhausted")
-                break
+                # Exact match
+                logger.info(f"Found exact match: block {mid} at {mid_time}")
+                return mid
         
-        if best_match:
-            height, timestamp, diff = best_match
-            logger.info(f"Best match found: height={height}, timestamp={timestamp}, "
-                       f"diff={diff}s (tolerance was {self.tolerance_seconds}s)")
-            return best_match
+        # Return the block before the target timestamp
+        result_height = high
+        
+        if result_height > 0:
+            result_time = self.get_block_time(result_height)
+            logger.info(f"Found closest block: {result_height} at {result_time} (target: {target_time})")
+            return result_height
         else:
-            logger.error("No valid block found")
+            logger.warning(f"Target timestamp {target_time} is before genesis block")
             return None
+    
+    def find_block_by_unix_timestamp(self, unix_timestamp: int) -> Optional[int]:
+        """
+        Convenience method to find block by Unix timestamp.
+        
+        Args:
+            unix_timestamp: Unix timestamp (seconds since epoch)
+            
+        Returns:
+            Block height at or before the target timestamp, or None if failed
+        """
+        target_time = datetime.fromtimestamp(unix_timestamp, tz=timezone.utc)
+        return self.find_block_by_timestamp(target_time)
+    
+    def get_block_info_for_timestamp(self, target_time: datetime) -> Optional[Tuple[int, datetime, int]]:
+        """
+        Get complete block information for a target timestamp.
+        
+        Args:
+            target_time: Target timestamp
+            
+        Returns:
+            Tuple of (block_height, block_time, unix_timestamp) or None if failed
+        """
+        block_height = self.find_block_by_timestamp(target_time)
+        if block_height is None:
+            return None
+        
+        block_time = self.get_block_time(block_height)
+        if block_time is None:
+            return None
+        
+        unix_timestamp = int(block_time.timestamp())
+        return block_height, block_time, unix_timestamp
 
 
-def find_layer_block_for_eth_timestamp(eth_timestamp: int, 
-                                      tolerance_seconds: int = 300) -> Optional[Tuple[int, int, int]]:
+# Convenience functions for backward compatibility and easy import
+def find_layer_block_by_timestamp(target_time: datetime, rpc_url: str = TELLOR_LAYER_RPC_URL) -> Optional[int]:
     """
-    Convenience function to find the closest Tellor Layer block for an Ethereum timestamp.
+    Find the Tellor Layer block closest to a target timestamp.
     
     Args:
-        eth_timestamp: Ethereum block timestamp (Unix)
-        tolerance_seconds: Acceptable time difference in seconds (default: 5 minutes)
+        target_time: Target timestamp (datetime object)
+        rpc_url: Tellor Layer RPC URL
         
     Returns:
-        Tuple of (layer_block_height, layer_timestamp, time_difference) or None if failed
+        Block height or None if failed
     """
-    finder = LayerBlockFinder(tolerance_seconds=tolerance_seconds)
-    return finder.find_closest_block(eth_timestamp)
+    finder = TellorLayerBlockFinder(rpc_url)
+    return finder.find_block_by_timestamp(target_time)
 
 
-if __name__ == "__main__":
-    import argparse
+def find_layer_block_by_unix_timestamp(unix_timestamp: int, rpc_url: str = TELLOR_LAYER_RPC_URL) -> Optional[int]:
+    """
+    Find the Tellor Layer block closest to a Unix timestamp.
     
-    # Configure logging for CLI usage
-    logging.basicConfig(
-        level=logging.INFO,
-        format='%(asctime)s - %(levelname)s - %(message)s'
-    )
-    
-    parser = argparse.ArgumentParser(description='Find Tellor Layer block closest to Ethereum timestamp')
-    parser.add_argument('eth_timestamp', type=int, help='Ethereum block timestamp (Unix)')
-    parser.add_argument('--tolerance', type=int, default=300, 
-                       help='Tolerance in seconds (default: 300)')
-    parser.add_argument('--debug', action='store_true', help='Enable debug logging')
-    
-    args = parser.parse_args()
-    
-    if args.debug:
-        logging.getLogger().setLevel(logging.DEBUG)
-    
-    result = find_layer_block_for_eth_timestamp(args.eth_timestamp, args.tolerance)
-    
-    if result:
-        height, timestamp, diff = result
-        eth_dt = datetime.fromtimestamp(args.eth_timestamp, tz=timezone.utc)
-        layer_dt = datetime.fromtimestamp(timestamp, tz=timezone.utc)
+    Args:
+        unix_timestamp: Unix timestamp (seconds since epoch)
+        rpc_url: Tellor Layer RPC URL
         
-        print(f"\n=== RESULT ===")
-        print(f"Ethereum timestamp: {args.eth_timestamp} ({eth_dt})")
-        print(f"Closest Layer block: {height}")
-        print(f"Layer timestamp: {timestamp} ({layer_dt})")
-        print(f"Time difference: {diff} seconds")
-        print(f"Within tolerance: {'✓' if diff <= args.tolerance else '✗'}")
+    Returns:
+        Block height or None if failed
+    """
+    finder = TellorLayerBlockFinder(rpc_url)
+    return finder.find_block_by_unix_timestamp(unix_timestamp)
+
+
+def find_layer_block_for_eth_timestamp(eth_timestamp: int, rpc_url: str = TELLOR_LAYER_RPC_URL) -> Optional[Tuple[int, datetime, int]]:
+    """
+    Find Tellor Layer block information for an Ethereum timestamp.
+    
+    This is the main function to resolve the historical data collection warning.
+    
+    Args:
+        eth_timestamp: Ethereum block timestamp (Unix timestamp)
+        rpc_url: Tellor Layer RPC URL
+        
+    Returns:
+        Tuple of (layer_height, layer_time, layer_timestamp) or None if failed
+    """
+    logger.info(f"Finding Tellor Layer block for Ethereum timestamp: {eth_timestamp}")
+    
+    finder = TellorLayerBlockFinder(rpc_url)
+    target_time = datetime.fromtimestamp(eth_timestamp, tz=timezone.utc)
+    
+    return finder.get_block_info_for_timestamp(target_time)
+
+
+# Example usage
+if __name__ == "__main__":
+    # Example: Find block for a specific timestamp
+    target_timestamp = datetime(2025, 7, 10, 18, 33, 36, tzinfo=timezone.utc)  # From the warning message
+    
+    print(f"Finding Tellor Layer block for timestamp: {target_timestamp}")
+    
+    finder = TellorLayerBlockFinder()
+    
+    # Test getting latest height
+    latest = finder.get_latest_height()
+    print(f"Latest height: {latest}")
+    
+    # Test finding block by timestamp
+    block_height = finder.find_block_by_timestamp(target_timestamp)
+    if block_height:
+        print(f"Found block: {block_height}")
+        
+        # Get the actual block time for verification
+        block_time = finder.get_block_time(block_height)
+        print(f"Block time: {block_time}")
     else:
-        print("Failed to find matching block")
-        exit(1)
+        print("Failed to find block")
 

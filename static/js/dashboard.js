@@ -83,8 +83,15 @@ class HistoricalDashboard {
         }
         
         tbody.innerHTML = data.timeline.map(snapshot => {
-            const datetime = new Date(snapshot.eth_timestamp * 1000);
-            const completenessScore = snapshot.data_completeness_score || 0;
+            // Fix: Use 'timestamp' instead of 'eth_timestamp' and add null check
+            const timestamp = snapshot.timestamp;
+            if (!timestamp) {
+                console.warn('Snapshot missing timestamp:', snapshot);
+                return ''; // Skip this row
+            }
+            
+            const datetime = new Date(timestamp * 1000);
+            const completenessScore = snapshot.completeness_score || snapshot.data_completeness_score || 0;
             const completenessClass = completenessScore >= 0.8 ? 'text-primary' : 
                                     completenessScore >= 0.5 ? 'text-accent' : 'text-muted';
             
@@ -129,7 +136,7 @@ class HistoricalDashboard {
                     </td>
                 </tr>
             `;
-        }).join('');
+        }).filter(row => row !== '').join(''); // Filter out empty rows
     }
     
     updateTimelineStats(data) {
@@ -147,24 +154,27 @@ class HistoricalDashboard {
         }
         
         // Calculate average completeness
-        const avgCompleteness = data.timeline.reduce((sum, s) => sum + (s.data_completeness_score || 0), 0) / data.timeline.length;
+        const avgCompleteness = data.timeline.reduce((sum, s) => {
+            const score = s.completeness_score || s.data_completeness_score || 0;
+            return sum + score;
+        }, 0) / data.timeline.length;
         
-        // Get timestamps
+        // Get timestamps - fix: use 'timestamp' instead of 'eth_timestamp'
         const latest = data.timeline[0];
         const oldest = data.timeline[data.timeline.length - 1];
         
         countElement.textContent = this.formatNumber(data.timeline.length);
         completenessElement.textContent = `${(avgCompleteness * 100).toFixed(1)}%`;
         
-        if (latest && latest.eth_timestamp) {
-            const latestDate = new Date(latest.eth_timestamp * 1000);
+        if (latest && latest.timestamp) {
+            const latestDate = new Date(latest.timestamp * 1000);
             latestElement.textContent = latestDate.toLocaleString().split(',')[1].trim();
         } else {
             latestElement.textContent = 'N/A';
         }
         
-        if (oldest && oldest.eth_timestamp) {
-            const oldestDate = new Date(oldest.eth_timestamp * 1000);
+        if (oldest && oldest.timestamp) {
+            const oldestDate = new Date(oldest.timestamp * 1000);
             oldestElement.textContent = oldestDate.toLocaleString().split(',')[1].trim();
         } else {
             oldestElement.textContent = 'N/A';

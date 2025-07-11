@@ -26,6 +26,7 @@ try:
     from .database import BalancesDatabase
     from .supply_collector import SupplyDataCollector
     from .get_active_balances import EnhancedActiveBalancesCollector
+    from .find_layer_block import TellorLayerBlockFinder, find_layer_block_for_eth_timestamp
 except (ImportError, ModuleNotFoundError):
     # Handle running as standalone script
     import sys
@@ -33,6 +34,7 @@ except (ImportError, ModuleNotFoundError):
     from src.tellor_supply_analytics.database import BalancesDatabase
     from src.tellor_supply_analytics.supply_collector import SupplyDataCollector
     from src.tellor_supply_analytics.get_active_balances import EnhancedActiveBalancesCollector
+    from src.tellor_supply_analytics.find_layer_block import TellorLayerBlockFinder, find_layer_block_for_eth_timestamp
 
 logger = logging.getLogger(__name__)
 
@@ -228,11 +230,91 @@ class UnifiedDataCollector:
             logger.info(f"ETH timestamp {eth_timestamp} is recent, collecting current layer data")
             return self.supply_collector.collect_current_data()
         
-        # For historical data, we'd need to implement layer block number lookup by timestamp
-        # For now, log that we need historical layer data and return None
-        logger.warning(f"ETH timestamp {eth_timestamp} is historical ({target_time}), "
-                      f"historical layer data collection not yet implemented")
-        return None
+        # For historical data, use the new block finder to get corresponding Tellor Layer data
+        logger.info(f"ETH timestamp {eth_timestamp} is historical ({target_time}), "
+                   f"finding corresponding Tellor Layer block...")
+        
+        try:
+            # Find the corresponding Tellor Layer block for this Ethereum timestamp
+            layer_block_info = find_layer_block_for_eth_timestamp(eth_timestamp)
+            if layer_block_info is None:
+                logger.warning(f"Could not find corresponding Tellor Layer block for ETH timestamp {eth_timestamp}")
+                return None
+            
+            layer_height, layer_time, layer_timestamp = layer_block_info
+            logger.info(f"Found Tellor Layer block {layer_height} at {layer_time} for ETH timestamp {eth_timestamp}")
+            
+            # Now collect historical layer data at that specific block height
+            historical_data = self.collect_historical_layer_data(layer_height, layer_timestamp, eth_timestamp)
+            
+            if historical_data:
+                logger.info(f"Successfully collected historical Tellor Layer data for block {layer_height}")
+                return historical_data
+            else:
+                logger.warning(f"Failed to collect historical data for Tellor Layer block {layer_height}")
+                return None
+                
+        except Exception as e:
+            logger.error(f"Error finding corresponding layer data for ETH timestamp {eth_timestamp}: {e}")
+            return None
+    
+    def collect_historical_layer_data(self, layer_height: int, layer_timestamp: int, eth_timestamp: int) -> Optional[Dict]:
+        """
+        Collect historical Tellor Layer supply data for a specific block height.
+        
+        Args:
+            layer_height: Tellor Layer block height
+            layer_timestamp: Tellor Layer block timestamp
+            eth_timestamp: Original Ethereum timestamp for reference
+            
+        Returns:
+            Dictionary containing historical layer data, or None if failed
+        """
+        try:
+            # Get total supply at the specific height
+            layer_supply = self.supply_collector.get_total_supply(layer_height)
+            if layer_supply is None:
+                logger.error(f"Failed to get total supply for layer height {layer_height}")
+                return None
+            
+            # Convert supply from loya to TRB
+            layer_supply_trb = layer_supply / (10 ** 6)
+            
+            # Get staking pool data at the specific height
+            staking_pool_data = self.supply_collector.get_staking_pool(layer_height)
+            if staking_pool_data:
+                not_bonded_tokens, bonded_tokens = staking_pool_data
+            else:
+                logger.warning(f"Failed to get staking pool data for height {layer_height}, using placeholder values")
+                not_bonded_tokens = 0
+                bonded_tokens = 0
+            
+            # Calculate free floating TRB
+            free_floating_trb = layer_supply_trb - not_bonded_tokens - bonded_tokens
+            
+            # Create historical data structure similar to current data
+            historical_data = {
+                'eth_block_number': 0,  # Historical, no direct ETH block mapping
+                'eth_block_timestamp': eth_timestamp,
+                'bridge_balance_trb': 0.0,  # Cannot get historical bridge balance easily
+                'layer_block_height': layer_height,
+                'layer_block_timestamp': layer_timestamp,
+                'layer_total_supply_trb': layer_supply_trb,
+                'not_bonded_tokens': not_bonded_tokens,
+                'bonded_tokens': bonded_tokens,
+                'free_floating_trb': free_floating_trb
+            }
+            
+            logger.info(f"Collected historical layer data for height {layer_height}: "
+                       f"supply={layer_supply_trb:.2f} TRB, "
+                       f"bonded={bonded_tokens:.2f}, "
+                       f"not_bonded={not_bonded_tokens:.2f}")
+            
+            return historical_data
+            
+        except Exception as e:
+            logger.error(f"Error collecting historical layer data for height {layer_height}: {e}")
+            return None
     
     def collect_balance_data_for_timestamp(self, eth_timestamp: int) -> Optional[List[Tuple[str, str, int, float]]]:
         """
