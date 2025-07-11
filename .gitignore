@@ -20,3 +20,8 @@ uv.lock
 src/tellor_supply_analytics/__pycache__/supply_collector.cpython-312.pyc
 *cpython
 src/tellor_supply_analytics/__pycache__/supply_collector.cpython-312.pyc
+src/tellor_supply_analytics/__pycache__/supply_collector.cpython-312.pyc
+logs/unified_collection.log
+api.log
+server.log
+uvicorn.log

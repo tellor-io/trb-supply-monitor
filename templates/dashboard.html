@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Tellor Layer Balance Analytics Dashboard</title>
+    <title>Tellor Supply Analytics - Historical Dashboard</title>
     <link rel="stylesheet" href="/static/css/unified-style-template.css">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -15,18 +15,88 @@
         <!-- Navigation -->
         <nav class="nav">
             <ul class="nav-list">
-                <li><a href="#" class="nav-link active" data-section="dashboard">Dashboard</a></li>
+                <li><a href="#" class="nav-link active" data-section="dashboard">Historical Dashboard</a></li>
+                <li><a href="#" class="nav-link" data-section="timeline">Timeline</a></li>
                 <li><a href="#" class="nav-link" data-section="balances">Balances</a></li>
                 <li><a href="#" class="nav-link" data-section="analytics">Analytics</a></li>
-                <li><a href="#" class="nav-link" data-section="history">History</a></li>
             </ul>
         </nav>
 
         <!-- Main Content -->
         <main class="main">
-            <!-- Stats Dashboard -->
+            <!-- Historical Data Table Section -->
+            <section class="card mb-xl" id="historicalSection">
+                <div class="card-header">
+                    <h1>Historical Supply Data - Last 24 Hours</h1>
+                    <div class="flex gap-sm">
+                        <button class="btn btn-sm btn-primary" id="refreshHistoryBtn">
+                            <i class="fas fa-sync-alt"></i>
+                            Refresh Timeline
+                        </button>
+                        <button class="btn btn-sm btn-secondary" id="collectUnifiedBtn">
+                            <i class="fas fa-database"></i>
+                            Trigger Collection
+                        </button>
+                        <select id="timeRangeSelect" class="form-input" style="width: auto;">
+                            <option value="6">Last 6 hours</option>
+                            <option value="12">Last 12 hours</option>
+                            <option value="24" selected>Last 24 hours</option>
+                            <option value="48">Last 48 hours</option>
+                            <option value="72">Last 72 hours</option>
+                            <option value="168">Last 7 days</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="card-body">
+                    <div class="mb-md" id="timelineStats">
+                        <div class="grid grid-cols-4 gap-md">
+                            <div class="text-center">
+                                <div class="stat-number text-sm" id="timelineCount">--</div>
+                                <div class="text-xs text-muted">Data Points</div>
+                            </div>
+                            <div class="text-center">
+                                <div class="stat-number text-sm" id="timelineCompleteness">--</div>
+                                <div class="text-xs text-muted">Avg Completeness</div>
+                            </div>
+                            <div class="text-center">
+                                <div class="stat-number text-sm" id="timelineLatest">--</div>
+                                <div class="text-xs text-muted">Latest Data</div>
+                            </div>
+                            <div class="text-center">
+                                <div class="stat-number text-sm" id="timelineOldest">--</div>
+                                <div class="text-xs text-muted">Oldest Data</div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="table-container" style="max-height: 500px; overflow-y: auto;">
+                        <table class="data-table" id="historicalTable">
+                            <thead style="position: sticky; top: 0; background: var(--bg-secondary);">
+                                <tr>
+                                    <th>Timestamp</th>
+                                    <th>ETH Block</th>
+                                    <th>Bridge Balance (TRB)</th>
+                                    <th>Layer Supply (TRB)</th>
+                                    <th>Free Floating (TRB)</th>
+                                    <th>Bonded Tokens</th>
+                                    <th>Not Bonded</th>
+                                    <th>Active Addresses</th>
+                                    <th>Total Balance (TRB)</th>
+                                    <th>Completeness</th>
+                                </tr>
+                            </thead>
+                            <tbody id="historicalTableBody">
+                                <tr>
+                                    <td colspan="10" class="text-center">Loading historical data...</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Current Stats Summary -->
             <section class="mb-xl" id="statsSection">
-                <h1 class="mb-lg">TRB Supply Metrics</h1>
+                <h2 class="mb-lg">Current TRB Supply Metrics</h2>
                 <div class="grid grid-auto-fit gap-lg" id="statsGrid">
                     <!-- Stats will be loaded dynamically -->
                     <div class="stat-card">
@@ -42,10 +112,32 @@
                 </div>
             </section>
 
-            <!-- Data Table Section -->
+            <!-- Timeline Charts Section -->
+            <section class="card mb-xl" id="chartsSection">
+                <div class="card-header">
+                    <h2>Supply Trends</h2>
+                    <div class="flex gap-sm">
+                        <button class="btn btn-sm btn-outline" id="toggleSupplyChart">
+                            <i class="fas fa-chart-line"></i>
+                            Supply Chart
+                        </button>
+                        <button class="btn btn-sm btn-outline" id="toggleBridgeChart">
+                            <i class="fas fa-exchange-alt"></i>
+                            Bridge Chart
+                        </button>
+                    </div>
+                </div>
+                <div class="card-body">
+                    <div id="chartContainer" class="text-center text-muted">
+                        Charts will be implemented in next update. For now, use the historical data table above to view trends.
+                    </div>
+                </div>
+            </section>
+
+            <!-- Active Balances Section -->
             <section class="card" id="balancesSection">
                 <div class="card-header">
-                    <h2>Active Balances</h2>
+                    <h2>Current Active Balances</h2>
                     <div class="flex gap-sm">
                         <button class="btn btn-sm btn-primary" id="refreshBtn">
                             <i class="fas fa-sync-alt"></i>
@@ -55,9 +147,9 @@
                             <i class="fas fa-database"></i>
                             Trigger Collection
                         </button>
-                        <button class="btn btn-sm btn-primary" id="viewHistoryBtn">
-                            <i class="fas fa-history"></i>
-                            View History
+                        <button class="btn btn-sm btn-primary" id="exportDataBtn">
+                            <i class="fas fa-download"></i>
+                            Export Data
                         </button>
                     </div>
                 </div>
