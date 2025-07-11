@@ -93,6 +93,92 @@ class BalancesDatabase:
                 )
             ''')
             
+            # NEW: Create unified snapshots table - Ethereum block timestamp as primary timeline
+            conn.execute('''
+                CREATE TABLE IF NOT EXISTS unified_snapshots (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    eth_block_number INTEGER NOT NULL,
+                    eth_block_timestamp INTEGER NOT NULL UNIQUE,
+                    eth_block_datetime TEXT NOT NULL,
+                    
+                    -- Ethereum/Bridge Data
+                    bridge_balance_trb REAL,
+                    
+                    -- Tellor Layer Data  
+                    layer_block_height INTEGER,
+                    layer_block_timestamp INTEGER,
+                    layer_block_datetime TEXT,
+                    layer_total_supply_trb REAL,
+                    
+                    -- Staking Data
+                    not_bonded_tokens REAL,
+                    bonded_tokens REAL,
+                    
+                    -- Balance Summary Data
+                    total_addresses INTEGER DEFAULT 0,
+                    addresses_with_balance INTEGER DEFAULT 0,
+                    total_loya_balance INTEGER DEFAULT 0,
+                    total_trb_balance REAL DEFAULT 0.0,
+                    free_floating_trb REAL DEFAULT 0.0,
+                    
+                    -- Collection metadata
+                    collection_time TIMESTAMP NOT NULL,
+                    data_completeness_score REAL DEFAULT 0.0,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            ''')
+            
+            # Create indexes for unified snapshots table
+            conn.execute('''
+                CREATE INDEX IF NOT EXISTS idx_unified_eth_timestamp 
+                ON unified_snapshots (eth_block_timestamp)
+            ''')
+            
+            conn.execute('''
+                CREATE INDEX IF NOT EXISTS idx_unified_eth_block_number 
+                ON unified_snapshots (eth_block_number)
+            ''')
+            
+            conn.execute('''
+                CREATE INDEX IF NOT EXISTS idx_unified_layer_height 
+                ON unified_snapshots (layer_block_height)
+            ''')
+            
+            conn.execute('''
+                CREATE INDEX IF NOT EXISTS idx_unified_collection_time 
+                ON unified_snapshots (collection_time)
+            ''')
+            
+            # Create unified balance snapshots table - links to unified snapshots by eth_block_timestamp
+            conn.execute('''
+                CREATE TABLE IF NOT EXISTS unified_balance_snapshots (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    eth_block_timestamp INTEGER NOT NULL,
+                    address TEXT NOT NULL,
+                    account_type TEXT NOT NULL,
+                    loya_balance INTEGER NOT NULL,
+                    loya_balance_trb REAL NOT NULL,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (eth_block_timestamp) REFERENCES unified_snapshots (eth_block_timestamp)
+                )
+            ''')
+            
+            # Create indexes for unified balance snapshots
+            conn.execute('''
+                CREATE INDEX IF NOT EXISTS idx_unified_balance_eth_timestamp 
+                ON unified_balance_snapshots (eth_block_timestamp)
+            ''')
+            
+            conn.execute('''
+                CREATE INDEX IF NOT EXISTS idx_unified_balance_address 
+                ON unified_balance_snapshots (address)
+            ''')
+            
+            conn.execute('''
+                CREATE INDEX IF NOT EXISTS idx_unified_balance_account_type 
+                ON unified_balance_snapshots (account_type)
+            ''')
+            
             # Create indexes for supply data table
             conn.execute('''
                 CREATE INDEX IF NOT EXISTS idx_supply_collection_time 
@@ -404,3 +490,219 @@ class BalancesDatabase:
         import shutil
         shutil.copy2(self.db_path, backup_path)
         logger.info(f"Database backed up to: {backup_path}") 
+
+    def save_unified_snapshot(self, 
+                            eth_block_number: int,
+                            eth_block_timestamp: int,
+                            supply_data: Optional[Dict] = None,
+                            balance_data: Optional[List[Tuple[str, str, int, float]]] = None,
+                            bridge_balance_trb: Optional[float] = None) -> int:
+        """
+        Save a unified snapshot using Ethereum block timestamp as the primary timeline.
+        
+        Args:
+            eth_block_number: Ethereum block number
+            eth_block_timestamp: Ethereum block timestamp (primary timeline)
+            supply_data: Dictionary containing supply metrics
+            balance_data: List of tuples (address, account_type, loya_balance, loya_balance_trb)  
+            bridge_balance_trb: Bridge balance in TRB
+            
+        Returns:
+            The ID of the unified snapshot record
+        """
+        collection_time = datetime.now(timezone.utc)
+        eth_block_datetime = datetime.fromtimestamp(eth_block_timestamp, tz=timezone.utc).isoformat()
+        
+        # Calculate data completeness score
+        completeness_score = self._calculate_completeness_score(supply_data, balance_data, bridge_balance_trb)
+        
+        with sqlite3.connect(self.db_path) as conn:
+            # Insert or update unified snapshot record
+            cursor = conn.execute('''
+                INSERT OR REPLACE INTO unified_snapshots 
+                (eth_block_number, eth_block_timestamp, eth_block_datetime, 
+                 bridge_balance_trb, layer_block_height, layer_block_timestamp, layer_block_datetime,
+                 layer_total_supply_trb, not_bonded_tokens, bonded_tokens,
+                 total_addresses, addresses_with_balance, total_loya_balance, total_trb_balance, 
+                 free_floating_trb, collection_time, data_completeness_score)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ''', (
+                eth_block_number,
+                eth_block_timestamp, 
+                eth_block_datetime,
+                bridge_balance_trb,
+                supply_data.get('layer_block_height') if supply_data else None,
+                supply_data.get('layer_block_timestamp') if supply_data else None,
+                datetime.fromtimestamp(supply_data.get('layer_block_timestamp', 0), tz=timezone.utc).isoformat() if supply_data and supply_data.get('layer_block_timestamp') else None,
+                supply_data.get('layer_total_supply_trb') if supply_data else None,
+                supply_data.get('not_bonded_tokens') if supply_data else None,
+                supply_data.get('bonded_tokens') if supply_data else None,
+                len(balance_data) if balance_data else 0,
+                sum(1 for _, _, loya, _ in balance_data if loya > 0) if balance_data else 0,
+                sum(loya for _, _, loya, _ in balance_data) if balance_data else 0,
+                sum(trb for _, _, _, trb in balance_data) if balance_data else 0.0,
+                supply_data.get('free_floating_trb') if supply_data else 0.0,
+                collection_time,
+                completeness_score
+            ))
+            
+            unified_snapshot_id = cursor.lastrowid
+            if unified_snapshot_id is None:
+                raise RuntimeError("Failed to get ID for unified snapshot record")
+            
+            # Save individual balance records if provided
+            if balance_data:
+                # Clear existing balance data for this timestamp
+                conn.execute('''
+                    DELETE FROM unified_balance_snapshots 
+                    WHERE eth_block_timestamp = ?
+                ''', (eth_block_timestamp,))
+                
+                # Insert new balance records
+                for address, account_type, loya_balance, loya_balance_trb in balance_data:
+                    conn.execute('''
+                        INSERT INTO unified_balance_snapshots 
+                        (eth_block_timestamp, address, account_type, loya_balance, loya_balance_trb)
+                        VALUES (?, ?, ?, ?, ?)
+                    ''', (eth_block_timestamp, address, account_type, loya_balance, loya_balance_trb))
+        
+        logger.info(f"Saved unified snapshot for ETH block {eth_block_number} (timestamp {eth_block_timestamp}) "
+                   f"with completeness score {completeness_score:.2f}")
+        return unified_snapshot_id
+    
+    def _calculate_completeness_score(self, 
+                                    supply_data: Optional[Dict], 
+                                    balance_data: Optional[List], 
+                                    bridge_balance: Optional[float]) -> float:
+        """Calculate a completeness score (0-1) based on available data fields."""
+        total_fields = 7  # bridge, layer_supply, staking(2), balances(3)
+        completed_fields = 0
+        
+        if bridge_balance is not None:
+            completed_fields += 1
+            
+        if supply_data:
+            if supply_data.get('layer_total_supply_trb') is not None:
+                completed_fields += 1
+            if supply_data.get('not_bonded_tokens') is not None:
+                completed_fields += 1  
+            if supply_data.get('bonded_tokens') is not None:
+                completed_fields += 1
+                
+        if balance_data:
+            completed_fields += 3  # total_addresses, addresses_with_balance, total_trb_balance
+            
+        return completed_fields / total_fields
+    
+    def get_unified_snapshots(self, limit: int = 100, min_completeness: float = 0.0) -> List[Dict]:
+        """Get unified snapshots ordered by Ethereum block timestamp."""
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.execute('''
+                SELECT * FROM unified_snapshots 
+                WHERE data_completeness_score >= ?
+                ORDER BY eth_block_timestamp DESC 
+                LIMIT ?
+            ''', (min_completeness, limit))
+            
+            columns = [desc[0] for desc in cursor.description]
+            return [dict(zip(columns, row)) for row in cursor.fetchall()]
+    
+    def get_unified_snapshot_by_eth_timestamp(self, eth_block_timestamp: int) -> Optional[Dict]:
+        """Get a specific unified snapshot by Ethereum block timestamp."""
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.execute('''
+                SELECT * FROM unified_snapshots 
+                WHERE eth_block_timestamp = ?
+            ''', (eth_block_timestamp,))
+            
+            row = cursor.fetchone()
+            if not row:
+                return None
+            
+            columns = [desc[0] for desc in cursor.description]
+            return dict(zip(columns, row))
+    
+    def get_unified_balances_by_eth_timestamp(self, eth_block_timestamp: int) -> List[Dict]:
+        """Get all balance records for a specific Ethereum block timestamp."""
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.execute('''
+                SELECT * FROM unified_balance_snapshots 
+                WHERE eth_block_timestamp = ?
+                ORDER BY loya_balance_trb DESC
+            ''', (eth_block_timestamp,))
+            
+            columns = [desc[0] for desc in cursor.description]
+            return [dict(zip(columns, row)) for row in cursor.fetchall()]
+    
+    def get_existing_eth_timestamps(self) -> List[int]:
+        """Get all existing Ethereum block timestamps from unified snapshots."""
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.execute('''
+                SELECT DISTINCT eth_block_timestamp 
+                FROM unified_snapshots 
+                ORDER BY eth_block_timestamp DESC
+            ''')
+            return [row[0] for row in cursor.fetchall()]
+    
+    def get_incomplete_snapshots(self, min_completeness: float = 1.0) -> List[Dict]:
+        """Get snapshots that are missing data (completeness < min_completeness)."""
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.execute('''
+                SELECT * FROM unified_snapshots 
+                WHERE data_completeness_score < ?
+                ORDER BY eth_block_timestamp DESC
+            ''', (min_completeness,))
+            
+            columns = [desc[0] for desc in cursor.description]
+            return [dict(zip(columns, row)) for row in cursor.fetchall()]
+    
+    def update_unified_snapshot_data(self, 
+                                   eth_block_timestamp: int, 
+                                   update_data: Dict) -> bool:
+        """Update specific fields in a unified snapshot."""
+        if not update_data:
+            return False
+            
+        # Build dynamic update query
+        set_clauses = []
+        values = []
+        
+        for field, value in update_data.items():
+            if field in ['bridge_balance_trb', 'layer_block_height', 'layer_block_timestamp',
+                        'layer_total_supply_trb', 'not_bonded_tokens', 'bonded_tokens',
+                        'total_addresses', 'addresses_with_balance', 'total_loya_balance',
+                        'total_trb_balance', 'free_floating_trb']:
+                set_clauses.append(f"{field} = ?")
+                values.append(value)
+        
+        if not set_clauses:
+            logger.warning("No valid fields to update")
+            return False
+            
+        values.append(eth_block_timestamp)
+        
+        with sqlite3.connect(self.db_path) as conn:
+            query = f'''
+                UPDATE unified_snapshots 
+                SET {', '.join(set_clauses)}, data_completeness_score = (
+                    SELECT COUNT(*) * 1.0 / 7 FROM (
+                        SELECT 1 WHERE bridge_balance_trb IS NOT NULL
+                        UNION ALL SELECT 1 WHERE layer_total_supply_trb IS NOT NULL  
+                        UNION ALL SELECT 1 WHERE not_bonded_tokens IS NOT NULL
+                        UNION ALL SELECT 1 WHERE bonded_tokens IS NOT NULL
+                        UNION ALL SELECT 1 WHERE total_addresses > 0
+                        UNION ALL SELECT 1 WHERE addresses_with_balance >= 0
+                        UNION ALL SELECT 1 WHERE total_trb_balance >= 0
+                    )
+                )
+                WHERE eth_block_timestamp = ?
+            '''
+            
+            cursor = conn.execute(query, values)
+            
+            if cursor.rowcount > 0:
+                logger.info(f"Updated unified snapshot for ETH timestamp {eth_block_timestamp}")
+                return True
+            else:
+                logger.warning(f"No unified snapshot found for ETH timestamp {eth_block_timestamp}")
+                return False 
