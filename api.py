@@ -254,10 +254,34 @@ async def get_incomplete_snapshots(
 async def get_summary():
     """Get summary of latest balance collection."""
     try:
+        # First try to get legacy collection run data
         summary = db.get_latest_snapshot()
-        if not summary:
-            raise HTTPException(status_code=404, detail="No balance data found")
-        return summary
+        if summary:
+            return summary
+        
+        # If no legacy data, get latest unified snapshot data
+        unified_snapshots = db.get_unified_snapshots(limit=1, min_completeness=0.0)
+        if unified_snapshots:
+            unified = unified_snapshots[0]
+            # Convert unified snapshot to legacy format for frontend compatibility
+            return {
+                "id": unified.get('id'),
+                "run_time": unified.get('collection_time'),
+                "total_addresses": unified.get('total_addresses', 0),
+                "addresses_with_balance": unified.get('addresses_with_balance', 0),
+                "total_loya_balance": unified.get('total_loya_balance', 0),
+                "total_trb_balance": unified.get('total_trb_balance', 0),
+                "bridge_balance_trb": unified.get('bridge_balance_trb', 0),
+                "layer_block_height": unified.get('layer_block_height', 0),
+                "free_floating_trb": unified.get('free_floating_trb', 0),
+                "status": "completed",
+                "created_at": unified.get('created_at')
+            }
+        
+        # If no data at all, return 404
+        raise HTTPException(status_code=404, detail="No balance data found")
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Error getting summary: {e}")
         raise HTTPException(status_code=500, detail="Internal server error")
@@ -275,6 +299,28 @@ async def get_balances(
             balances = db.search_addresses(search, limit)
         else:
             balances = db.get_latest_balances(limit, offset)
+        
+        # If no legacy balance data, try to get from unified snapshots
+        if not balances:
+            unified_snapshots = db.get_unified_snapshots(limit=1, min_completeness=0.0)
+            if unified_snapshots:
+                latest_unified = unified_snapshots[0]
+                eth_timestamp = latest_unified.get('eth_block_timestamp')
+                if eth_timestamp:
+                    balances = db.get_unified_balances_by_eth_timestamp(eth_timestamp)
+                    # Convert unified balance format to legacy format for frontend compatibility
+                    balances = [
+                        {
+                            "id": balance.get('id'),
+                            "snapshot_time": latest_unified.get('collection_time'),
+                            "address": balance.get('address'),
+                            "account_type": balance.get('account_type'),
+                            "loya_balance": balance.get('loya_balance', 0),
+                            "loya_balance_trb": balance.get('loya_balance_trb', 0),
+                            "created_at": balance.get('created_at')
+                        }
+                        for balance in balances[:limit]
+                    ]
         
         return {
             "balances": balances,
@@ -385,7 +431,19 @@ async def trigger_unified_collection(
 async def get_api_status():
     """Get API and database status."""
     try:
+        # Try legacy data first
         latest = db.get_latest_snapshot()
+        
+        # If no legacy data, use unified data
+        if not latest:
+            unified_snapshots = db.get_unified_snapshots(limit=1, min_completeness=0.0)
+            if unified_snapshots:
+                latest = unified_snapshots[0]
+                # Convert to legacy format for status display
+                latest = {
+                    "run_time": latest.get('collection_time'),
+                    "total_addresses": latest.get('total_addresses', 0)
+                }
         
         # Also check unified data
         unified_snapshots = db.get_unified_snapshots(limit=1)

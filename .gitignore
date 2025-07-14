@@ -6,22 +6,52 @@ supply_data_all.csv
 1.json
 accounts_example.json
 uv.lock
+# Python cache files
 __pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.pyc
+*.pyo
+*.pyd
+
+# Virtual environments
 .venv/
-.DS_Store
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# Environment files
 .env
 .env.local
 .env.development.local
 .env.test.local
 .env.production.local
+
+# Database files
 tellor_balances.db
+*.db
+*.sqlite3
+
+# Log files
+*.log
+logs/
 app.log
-uv.lock
-src/tellor_supply_analytics/__pycache__/supply_collector.cpython-312.pyc
-*cpython
-src/tellor_supply_analytics/__pycache__/supply_collector.cpython-312.pyc
-src/tellor_supply_analytics/__pycache__/supply_collector.cpython-312.pyc
-logs/unified_collection.log
 api.log
 server.log
 uvicorn.log
+
+# System files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Package files
+uv.lock
