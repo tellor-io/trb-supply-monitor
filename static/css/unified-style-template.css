@@ -807,7 +807,89 @@ h4 { font-size: 1rem; color: var(--text-tertiary); }
 }
 
 /* ========================================
-   16. ACCESSIBILITY
+   16. CHART STYLES
+   ======================================== */
+
+.chart-container {
+    position: relative;
+    width: 100%;
+    height: 400px;
+    margin: var(--spacing-lg) 0;
+    padding: var(--spacing-md);
+    background: rgba(30, 30, 40, 0.3);
+    border: 1px solid var(--border-secondary);
+    border-radius: 8px;
+}
+
+.chart-container canvas {
+    max-width: 100%;
+    max-height: 100%;
+}
+
+.chart-container.hidden {
+    display: none;
+}
+
+/* Chart button states */
+.btn[data-active="true"] {
+    background: var(--primary-green);
+    color: #000;
+    border-color: var(--primary-green);
+}
+
+.btn[data-active="true"]:hover {
+    background: var(--primary-blue);
+    border-color: var(--primary-blue);
+}
+
+/* Chart loading and error states */
+#chartLoading,
+#chartError {
+    padding: var(--spacing-xl);
+    background: rgba(30, 30, 40, 0.3);
+    border: 1px solid var(--border-secondary);
+    border-radius: 8px;
+    margin: var(--spacing-lg) 0;
+}
+
+#chartError {
+    border-color: var(--accent-red);
+    background: rgba(255, 71, 87, 0.1);
+}
+
+/* Chart summary stats */
+#chartSummary {
+    padding: var(--spacing-md);
+    background: rgba(30, 30, 40, 0.2);
+    border: 1px solid var(--border-secondary);
+    border-radius: 6px;
+}
+
+/* Responsive chart adjustments */
+@media (max-width: 768px) {
+    .chart-container {
+        height: 300px;
+        padding: var(--spacing-sm);
+    }
+    
+    #chartSummary .grid-cols-4 {
+        grid-template-columns: repeat(2, 1fr);
+        gap: var(--spacing-sm);
+    }
+}
+
+@media (max-width: 480px) {
+    .chart-container {
+        height: 250px;
+    }
+    
+    #chartSummary .grid-cols-4 {
+        grid-template-columns: 1fr;
+    }
+}
+
+/* ========================================
+   17. ACCESSIBILITY
    ======================================== */
 
 /* Focus styles */

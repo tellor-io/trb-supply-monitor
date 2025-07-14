@@ -125,7 +125,7 @@ async def get_unified_balances_by_timestamp(
 
 @app.get("/api/unified/timeline")
 async def get_unified_timeline(
-    hours_back: int = Query(24, description="Hours of data to include", ge=1, le=168),
+    hours_back: int = Query(24, description="Hours of data to include", ge=1, le=8760),
     min_completeness: float = Query(0.5, description="Minimum completeness score", ge=0.0, le=1.0)
 ):
     """Get timeline data for charts - optimized for frontend visualization."""
