@@ -8,6 +8,12 @@ class HistoricalDashboard {
         this.currentSearch = '';
         this.currentTimeRange = 24;
         this.historicalData = [];
+        this.charts = {
+            supply: null,
+            bridge: null,
+            balance: null
+        };
+        this.currentChart = 'supply';
         
         this.init();
     }
@@ -28,9 +34,10 @@ class HistoricalDashboard {
         document.getElementById('collectBtn').addEventListener('click', () => this.triggerCollection());
         document.getElementById('exportDataBtn').addEventListener('click', () => this.exportData());
         
-        // Chart buttons (placeholder)
-        document.getElementById('toggleSupplyChart').addEventListener('click', () => this.showMessage('Charts coming soon!'));
-        document.getElementById('toggleBridgeChart').addEventListener('click', () => this.showMessage('Charts coming soon!'));
+        // Chart buttons
+        document.getElementById('toggleSupplyChart').addEventListener('click', () => this.showChart('supply'));
+        document.getElementById('toggleBridgeChart').addEventListener('click', () => this.showChart('bridge'));
+        document.getElementById('toggleBalanceChart').addEventListener('click', () => this.showChart('balance'));
     }
     
     async loadInitialData() {
@@ -59,6 +66,7 @@ class HistoricalDashboard {
             this.historicalData = data.timeline || [];
             this.updateHistoricalTable(data);
             this.updateTimelineStats(data);
+            this.updateCharts(data);
             
             console.log(`Loaded ${this.historicalData.length} historical data points`);
         } catch (error) {
@@ -474,6 +482,350 @@ class HistoricalDashboard {
     
     showMessage(message) {
         alert(message);
+    }
+    
+    // Chart Management Methods
+    showChart(chartType) {
+        // Update button states
+        document.querySelectorAll('[id^="toggle"][id$="Chart"]').forEach(btn => {
+            btn.classList.remove('btn-primary');
+            btn.classList.add('btn-outline');
+            btn.setAttribute('data-active', 'false');
+        });
+        
+        const activeBtn = document.getElementById(`toggle${chartType.charAt(0).toUpperCase() + chartType.slice(1)}Chart`);
+        activeBtn.classList.remove('btn-outline');
+        activeBtn.classList.add('btn-primary');
+        activeBtn.setAttribute('data-active', 'true');
+        
+        // Hide all chart containers
+        document.querySelectorAll('.chart-container').forEach(container => {
+            container.classList.add('hidden');
+        });
+        
+        // Show selected chart container
+        document.getElementById(`${chartType}ChartContainer`).classList.remove('hidden');
+        
+        this.currentChart = chartType;
+        
+        // Update chart if data is available
+        if (this.historicalData.length > 0) {
+            this.updateCharts({ timeline: this.historicalData });
+        }
+    }
+    
+    updateCharts(data) {
+        if (!data.timeline || data.timeline.length === 0) {
+            this.showNoDataState();
+            return;
+        }
+        
+        this.hideNoDataState();
+        this.createCharts(data.timeline);
+    }
+    
+    createCharts(timeline) {
+        // Sort timeline by timestamp for proper chart display
+        const sortedTimeline = [...timeline].sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0));
+        
+        // Create datasets
+        const labels = sortedTimeline.map(d => new Date((d.timestamp || 0) * 1000));
+        
+        // Supply Overview Chart
+        if (this.currentChart === 'supply' || !this.charts.supply) {
+            this.createSupplyChart(labels, sortedTimeline);
+        }
+        
+        // Bridge & Staking Chart
+        if (this.currentChart === 'bridge' || !this.charts.bridge) {
+            this.createBridgeChart(labels, sortedTimeline);
+        }
+        
+        // Active Balances Chart
+        if (this.currentChart === 'balance' || !this.charts.balance) {
+            this.createBalanceChart(labels, sortedTimeline);
+        }
+    }
+    
+    createSupplyChart(labels, timeline) {
+        const ctx = document.getElementById('supplyChart').getContext('2d');
+        
+        if (this.charts.supply) {
+            this.charts.supply.destroy();
+        }
+        
+        this.charts.supply = new Chart(ctx, {
+            type: 'line',
+            data: {
+                labels: labels,
+                datasets: [
+                    {
+                        label: 'Total Layer Supply',
+                        data: timeline.map(d => d.layer_total_supply_trb || 0),
+                        borderColor: '#00ff88',
+                        backgroundColor: 'rgba(0, 255, 136, 0.1)',
+                        fill: true,
+                        tension: 0.1,
+                        pointRadius: 2,
+                        pointHoverRadius: 6
+                    },
+                    {
+                        label: 'Free Floating TRB',
+                        data: timeline.map(d => d.free_floating_trb || 0),
+                        borderColor: '#00d4ff',
+                        backgroundColor: 'rgba(0, 212, 255, 0.1)',
+                        fill: true,
+                        tension: 0.1,
+                        pointRadius: 2,
+                        pointHoverRadius: 6
+                    },
+                    {
+                        label: 'Bridge Balance',
+                        data: timeline.map(d => d.bridge_balance_trb || 0),
+                        borderColor: '#ff6b6b',
+                        backgroundColor: 'rgba(255, 107, 107, 0.1)',
+                        fill: false,
+                        tension: 0.1,
+                        pointRadius: 2,
+                        pointHoverRadius: 6
+                    }
+                ]
+            },
+            options: this.getChartOptions('TRB Supply Overview', 'TRB Amount')
+        });
+    }
+    
+    createBridgeChart(labels, timeline) {
+        const ctx = document.getElementById('bridgeChart').getContext('2d');
+        
+        if (this.charts.bridge) {
+            this.charts.bridge.destroy();
+        }
+        
+        this.charts.bridge = new Chart(ctx, {
+            type: 'line',
+            data: {
+                labels: labels,
+                datasets: [
+                    {
+                        label: 'Bridge Balance',
+                        data: timeline.map(d => d.bridge_balance_trb || 0),
+                        borderColor: '#ff6b6b',
+                        backgroundColor: 'rgba(255, 107, 107, 0.2)',
+                        fill: true,
+                        tension: 0.1,
+                        pointRadius: 3,
+                        pointHoverRadius: 7,
+                        yAxisID: 'y'
+                    },
+                    {
+                        label: 'Bonded Tokens',
+                        data: timeline.map(d => d.bonded_tokens || 0),
+                        borderColor: '#00ff88',
+                        backgroundColor: 'rgba(0, 255, 136, 0.1)',
+                        fill: false,
+                        tension: 0.1,
+                        pointRadius: 2,
+                        pointHoverRadius: 6,
+                        yAxisID: 'y'
+                    },
+                    {
+                        label: 'Not Bonded Tokens',
+                        data: timeline.map(d => d.not_bonded_tokens || 0),
+                        borderColor: '#ffd700',
+                        backgroundColor: 'rgba(255, 215, 0, 0.1)',
+                        fill: false,
+                        tension: 0.1,
+                        pointRadius: 2,
+                        pointHoverRadius: 6,
+                        yAxisID: 'y'
+                    }
+                ]
+            },
+            options: this.getChartOptions('Bridge & Staking Metrics', 'TRB Amount')
+        });
+    }
+    
+    createBalanceChart(labels, timeline) {
+        const ctx = document.getElementById('balanceChart').getContext('2d');
+        
+        if (this.charts.balance) {
+            this.charts.balance.destroy();
+        }
+        
+        this.charts.balance = new Chart(ctx, {
+            type: 'line',
+            data: {
+                labels: labels,
+                datasets: [
+                    {
+                        label: 'Total Active Balance',
+                        data: timeline.map(d => d.total_trb_balance || 0),
+                        borderColor: '#00d4ff',
+                        backgroundColor: 'rgba(0, 212, 255, 0.2)',
+                        fill: true,
+                        tension: 0.1,
+                        pointRadius: 3,
+                        pointHoverRadius: 7,
+                        yAxisID: 'y'
+                    },
+                    {
+                        label: 'Active Addresses',
+                        data: timeline.map(d => d.total_addresses || 0),
+                        borderColor: '#ff9500',
+                        backgroundColor: 'rgba(255, 149, 0, 0.1)',
+                        fill: false,
+                        tension: 0.1,
+                        pointRadius: 2,
+                        pointHoverRadius: 6,
+                        yAxisID: 'y1'
+                    },
+                    {
+                        label: 'Addresses with Balance',
+                        data: timeline.map(d => d.addresses_with_balance || 0),
+                        borderColor: '#00ff88',
+                        backgroundColor: 'rgba(0, 255, 136, 0.1)',
+                        fill: false,
+                        tension: 0.1,
+                        pointRadius: 2,
+                        pointHoverRadius: 6,
+                        yAxisID: 'y1'
+                    }
+                ]
+            },
+            options: {
+                ...this.getChartOptions('Active Balance Metrics', 'TRB Amount'),
+                scales: {
+                    ...this.getChartOptions('Active Balance Metrics', 'TRB Amount').scales,
+                    y1: {
+                        type: 'linear',
+                        display: true,
+                        position: 'right',
+                        title: {
+                            display: true,
+                            text: 'Address Count',
+                            color: '#a0a0a0'
+                        },
+                        ticks: {
+                            color: '#a0a0a0',
+                            callback: function(value) {
+                                return value.toLocaleString();
+                            }
+                        },
+                        grid: {
+                            drawOnChartArea: false,
+                        },
+                    }
+                }
+            }
+        });
+    }
+    
+    getChartOptions(title, yAxisLabel) {
+        return {
+            responsive: true,
+            maintainAspectRatio: false,
+            interaction: {
+                mode: 'index',
+                intersect: false,
+            },
+            plugins: {
+                title: {
+                    display: true,
+                    text: title,
+                    color: '#ffffff',
+                    font: {
+                        size: 16,
+                        weight: 'bold'
+                    }
+                },
+                legend: {
+                    labels: {
+                        color: '#a0a0a0',
+                        usePointStyle: true,
+                        padding: 20
+                    }
+                },
+                tooltip: {
+                    backgroundColor: 'rgba(20, 20, 30, 0.95)',
+                    titleColor: '#ffffff',
+                    bodyColor: '#a0a0a0',
+                    borderColor: '#00ff88',
+                    borderWidth: 1,
+                    callbacks: {
+                        title: function(context) {
+                            return new Date(context[0].parsed.x).toLocaleString();
+                        },
+                        label: function(context) {
+                            const label = context.dataset.label || '';
+                            const value = context.parsed.y;
+                            if (label.includes('Balance') || label.includes('TRB') || label.includes('Tokens')) {
+                                return `${label}: ${value.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 6})} TRB`;
+                            } else {
+                                return `${label}: ${value.toLocaleString()}`;
+                            }
+                        }
+                    }
+                }
+            },
+            scales: {
+                x: {
+                    type: 'time',
+                    time: {
+                        displayFormats: {
+                            hour: 'MMM d, HH:mm',
+                            day: 'MMM d',
+                            week: 'MMM d',
+                            month: 'MMM yyyy'
+                        }
+                    },
+                    title: {
+                        display: true,
+                        text: 'Time',
+                        color: '#a0a0a0'
+                    },
+                    ticks: {
+                        color: '#a0a0a0',
+                        maxTicksLimit: 8
+                    },
+                    grid: {
+                        color: 'rgba(160, 160, 160, 0.1)'
+                    }
+                },
+                y: {
+                    title: {
+                        display: true,
+                        text: yAxisLabel,
+                        color: '#a0a0a0'
+                    },
+                    ticks: {
+                        color: '#a0a0a0',
+                        callback: function(value) {
+                            if (value >= 1000000) {
+                                return (value / 1000000).toFixed(1) + 'M';
+                            } else if (value >= 1000) {
+                                return (value / 1000).toFixed(1) + 'K';
+                            }
+                            return value.toLocaleString();
+                        }
+                    },
+                    grid: {
+                        color: 'rgba(160, 160, 160, 0.1)'
+                    }
+                }
+            }
+        };
+    }
+    
+    showNoDataState() {
+        document.querySelectorAll('.chart-container').forEach(container => {
+            container.classList.add('hidden');
+        });
+        document.getElementById('chartNoData').classList.remove('hidden');
+    }
+    
+    hideNoDataState() {
+        document.getElementById('chartNoData').classList.add('hidden');
     }
 }
 

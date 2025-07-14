@@ -9,6 +9,8 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
 </head>
 <body>
     <div class="app">
@@ -117,19 +119,47 @@
                 <div class="card-header">
                     <h2>Supply Trends</h2>
                     <div class="flex gap-sm">
-                        <button class="btn btn-sm btn-outline" id="toggleSupplyChart">
+                        <button class="btn btn-sm btn-primary" id="toggleSupplyChart" data-active="true">
                             <i class="fas fa-chart-line"></i>
-                            Supply Chart
+                            Supply Overview
                         </button>
-                        <button class="btn btn-sm btn-outline" id="toggleBridgeChart">
+                        <button class="btn btn-sm btn-outline" id="toggleBridgeChart" data-active="false">
                             <i class="fas fa-exchange-alt"></i>
-                            Bridge Chart
+                            Bridge & Staking
+                        </button>
+                        <button class="btn btn-sm btn-outline" id="toggleBalanceChart" data-active="false">
+                            <i class="fas fa-wallet"></i>
+                            Active Balances
                         </button>
                     </div>
                 </div>
                 <div class="card-body">
-                    <div id="chartContainer" class="text-center text-muted">
-                        Charts will be implemented in next update. For now, use the historical data table above to view trends.
+                    <!-- Supply Overview Chart -->
+                    <div id="supplyChartContainer" class="chart-container">
+                        <canvas id="supplyChart" width="400" height="200"></canvas>
+                    </div>
+                    
+                    <!-- Bridge & Staking Chart -->
+                    <div id="bridgeChartContainer" class="chart-container hidden">
+                        <canvas id="bridgeChart" width="400" height="200"></canvas>
+                    </div>
+                    
+                    <!-- Active Balances Chart -->
+                    <div id="balanceChartContainer" class="chart-container hidden">
+                        <canvas id="balanceChart" width="400" height="200"></canvas>
+                    </div>
+                    
+                    <!-- Chart Loading State -->
+                    <div id="chartLoading" class="text-center text-muted hidden">
+                        <i class="fas fa-spinner fa-spin"></i>
+                        <span>Loading chart data...</span>
+                    </div>
+                    
+                    <!-- No Data State -->
+                    <div id="chartNoData" class="text-center text-muted hidden">
+                        <i class="fas fa-chart-line"></i>
+                        <div>No data available for charts</div>
+                        <small>Try collecting data or selecting a different time range</small>
                     </div>
                 </div>
             </section>
