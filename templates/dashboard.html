@@ -29,16 +29,8 @@
             <!-- Historical Data Table Section -->
             <section class="card mb-xl" id="historicalSection">
                 <div class="card-header">
-                    <h1>Historical Supply Data - Last 24 Hours</h1>
+                    <h1>TRB Supply Data</h1>
                     <div class="flex gap-sm">
-                        <button class="btn btn-sm btn-primary" id="refreshHistoryBtn">
-                            <i class="fas fa-sync-alt"></i>
-                            Refresh Timeline
-                        </button>
-                        <button class="btn btn-sm btn-secondary" id="collectUnifiedBtn">
-                            <i class="fas fa-database"></i>
-                            Trigger Collection
-                        </button>
                         <select id="timeRangeSelect" class="form-input" style="width: auto;">
                             <option value="6">Last 6 hours</option>
                             <option value="12">Last 12 hours</option>
@@ -151,12 +143,6 @@
                         <canvas id="balanceChart" width="400" height="200"></canvas>
                     </div>
                     
-                    <!-- Chart Loading State -->
-                    <div id="chartLoading" class="text-center text-muted hidden">
-                        <i class="fas fa-spinner fa-spin"></i>
-                        <span>Loading chart data...</span>
-                    </div>
-                    
                     <!-- No Data State -->
                     <div id="chartNoData" class="text-center text-muted hidden">
                         <i class="fas fa-chart-line"></i>
@@ -174,10 +160,6 @@
                         <button class="btn btn-sm btn-primary" id="refreshBtn">
                             <i class="fas fa-sync-alt"></i>
                             Refresh Data
-                        </button>
-                        <button class="btn btn-sm btn-secondary" id="collectBtn">
-                            <i class="fas fa-database"></i>
-                            Trigger Collection
                         </button>
                         <button class="btn btn-sm btn-primary" id="exportDataBtn">
                             <i class="fas fa-download"></i>

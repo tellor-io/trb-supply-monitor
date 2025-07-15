@@ -189,6 +189,61 @@ def run_historic_collection(collector: UnifiedDataCollector, args):
     """Run historic data collection - one sample per day back to genesis."""
     logger.info("Starting historic data collection")
     
+    # FIRST: Re-run any incomplete daily collections that already exist
+    logger.info("Checking for incomplete snapshots to re-run...")
+    incomplete_snapshots = collector.db.get_incomplete_snapshots(min_completeness=1.0)
+    
+    if incomplete_snapshots:
+        logger.info(f"Found {len(incomplete_snapshots)} incomplete snapshots to re-run")
+        updated_count = 0
+        
+        for i, snapshot in enumerate(incomplete_snapshots, 1):
+            # Get values with proper type handling
+            eth_block_number_raw = snapshot.get('eth_block_number')
+            eth_timestamp_raw = snapshot.get('eth_block_timestamp')
+            current_score = snapshot.get('data_completeness_score', 0)
+            collection_time = snapshot.get('collection_time', 'Unknown')
+            
+            # Skip snapshots with missing required data
+            if eth_block_number_raw is None or eth_timestamp_raw is None:
+                logger.warning(f"Skipping incomplete snapshot with missing block number or timestamp")
+                continue
+            
+            # Convert to int for the collection call (we know they're not None from check above)
+            eth_block_number: int = int(eth_block_number_raw)  # type: ignore
+            eth_timestamp: int = int(eth_timestamp_raw)  # type: ignore
+            
+            logger.info(f"Re-running incomplete snapshot {i}/{len(incomplete_snapshots)}: "
+                       f"ETH block {eth_block_number} (timestamp {eth_timestamp}, "
+                       f"collected {collection_time}, completeness: {current_score:.2f})")
+            
+            try:
+                if collector.collect_unified_snapshot(eth_block_number, eth_timestamp):
+                    updated_count += 1
+                    logger.info(f"Successfully updated incomplete snapshot for ETH block {eth_block_number}")
+                else:
+                    logger.warning(f"Failed to update incomplete snapshot for ETH block {eth_block_number}")
+                
+                # Add delay between re-collections
+                if i < len(incomplete_snapshots):
+                    time.sleep(1)
+                    
+            except Exception as e:
+                logger.error(f"Error re-running incomplete snapshot for ETH block {eth_block_number}: {e}")
+                continue
+                
+            # Check for shutdown signal during incomplete snapshot processing
+            if shutdown_requested:
+                logger.info("Shutdown requested during incomplete snapshot re-run, stopping")
+                return updated_count
+        
+        logger.info(f"Completed re-running incomplete snapshots: {updated_count}/{len(incomplete_snapshots)} updated")
+    else:
+        logger.info("No incomplete snapshots found to re-run")
+    
+    # SECOND: Proceed with normal historic collection for missing days
+    logger.info("Starting daily historic data collection for missing days...")
+    
     # Get node height information
     latest_height, earliest_height = get_node_height_info(collector)
     if latest_height is None or earliest_height is None:
@@ -314,8 +369,11 @@ def run_historic_collection(collector: UnifiedDataCollector, args):
             
             continue
     
-    logger.info(f"Historic collection completed: {successful_collections} days processed")
-    return successful_collections
+    total_updated = (updated_count if 'updated_count' in locals() else 0) + successful_collections
+    logger.info(f"Historic collection completed: {successful_collections} new days processed, "
+               f"{updated_count if 'updated_count' in locals() else 0} incomplete snapshots re-run, "
+               f"total: {total_updated}")
+    return total_updated
 
 def get_node_height_info(collector: UnifiedDataCollector):
     """Get current and earliest block heights from layerd status."""

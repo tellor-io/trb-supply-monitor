@@ -25,13 +25,10 @@ class HistoricalDashboard {
     
     bindEvents() {
         // Historical data buttons
-        document.getElementById('refreshHistoryBtn').addEventListener('click', () => this.loadHistoricalData());
-        document.getElementById('collectUnifiedBtn').addEventListener('click', () => this.triggerUnifiedCollection());
         document.getElementById('timeRangeSelect').addEventListener('change', (e) => this.changeTimeRange(e.target.value));
         
         // Legacy buttons
         document.getElementById('refreshBtn').addEventListener('click', () => this.loadInitialData());
-        document.getElementById('collectBtn').addEventListener('click', () => this.triggerCollection());
         document.getElementById('exportDataBtn').addEventListener('click', () => this.exportData());
         
         // Chart buttons
@@ -191,33 +188,7 @@ class HistoricalDashboard {
         this.loadHistoricalData();
     }
     
-    async triggerUnifiedCollection() {
-        if (!confirm('This will trigger unified data collection. This may take several minutes. Continue?')) {
-            return;
-        }
-        
-        this.showLoading('Collecting unified data...');
-        try {
-            const hours_back = Math.min(this.currentTimeRange, 24); // Limit collection scope
-            const response = await fetch(`${this.apiBase}/api/unified/collect?hours_back=${hours_back}&max_blocks=50`, { 
-                method: 'POST' 
-            });
-            const data = await response.json();
-            
-            if (data.status === 'success') {
-                this.showSuccess(`Unified collection completed: ${data.message || 'Success'}`);
-                // Wait a moment then refresh data
-                setTimeout(() => this.loadHistoricalData(), 2000);
-            } else {
-                this.showError(`Collection failed: ${data.message || 'Unknown error'}`);
-            }
-        } catch (error) {
-            console.error('Error triggering unified collection:', error);
-            this.showError('Failed to trigger unified collection');
-        } finally {
-            this.hideLoading();
-        }
-    }
+
     
     async loadSummary() {
         try {
@@ -341,29 +312,7 @@ class HistoricalDashboard {
         `).join('');
     }
     
-    async triggerCollection() {
-        if (!confirm('This will trigger a new balance collection. This may take several minutes. Continue?')) {
-            return;
-        }
-        
-        this.showLoading('Collecting balance data...');
-        try {
-            const response = await fetch(`${this.apiBase}/api/collect`, { method: 'POST' });
-            const data = await response.json();
-            
-            if (data.status === 'success') {
-                this.showSuccess('Balance collection completed successfully');
-                this.loadInitialData();
-            } else {
-                this.showError('Collection failed');
-            }
-        } catch (error) {
-            console.error('Error triggering collection:', error);
-            this.showError('Failed to trigger collection');
-        } finally {
-            this.hideLoading();
-        }
-    }
+
     
     async exportData() {
         try {
@@ -663,17 +612,6 @@ class HistoricalDashboard {
                         pointRadius: 3,
                         pointHoverRadius: 7,
                         yAxisID: 'y'
-                    },
-                    {
-                        label: 'Active Addresses',
-                        data: timeline.map(d => d.total_addresses || 0),
-                        borderColor: '#ff9500',
-                        backgroundColor: 'rgba(255, 149, 0, 0.1)',
-                        fill: false,
-                        tension: 0.1,
-                        pointRadius: 2,
-                        pointHoverRadius: 6,
-                        yAxisID: 'y1'
                     },
                     {
                         label: 'Addresses with Balance',
