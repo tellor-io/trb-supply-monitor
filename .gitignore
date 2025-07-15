@@ -55,3 +55,7 @@ Thumbs.db
 
 # Package files
 uv.lock
+
+# Database exports - keep folder but ignore contents
+database_exports/*
+!database_exports/.gitkeep

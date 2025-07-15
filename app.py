@@ -457,12 +457,14 @@ async def get_unified_timeline(
                 'timestamp': snapshot.get('eth_block_timestamp'),
                 'datetime': snapshot.get('eth_block_datetime'),
                 'eth_block_number': snapshot.get('eth_block_number'),
+                'layer_block_height': snapshot.get('layer_block_height', 0),
                 'bridge_balance_trb': snapshot.get('bridge_balance_trb', 0),
                 'layer_total_supply_trb': snapshot.get('layer_total_supply_trb', 0),
                 'bonded_tokens': snapshot.get('bonded_tokens', 0),
                 'not_bonded_tokens': snapshot.get('not_bonded_tokens', 0),
                 'free_floating_trb': snapshot.get('free_floating_trb', 0),
                 'total_addresses': snapshot.get('total_addresses', 0),
+                'addresses_with_balance': snapshot.get('addresses_with_balance', 0),
                 'total_trb_balance': snapshot.get('total_trb_balance', 0),
                 'completeness_score': snapshot.get('data_completeness_score', 0)
             })

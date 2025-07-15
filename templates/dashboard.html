@@ -42,10 +42,12 @@
                         <select id="timeRangeSelect" class="form-input" style="width: auto;">
                             <option value="6">Last 6 hours</option>
                             <option value="12">Last 12 hours</option>
-                            <option value="24" selected>Last 24 hours</option>
+                            <option value="24">Last 24 hours</option>
                             <option value="48">Last 48 hours</option>
                             <option value="72">Last 72 hours</option>
                             <option value="168">Last 7 days</option>
+                            <option value="720">Last 30 days</option>
+                            <option value="8760" selected>All Available Data</option>
                         </select>
                     </div>
                 </div>
@@ -76,6 +78,7 @@
                                 <tr>
                                     <th>Timestamp</th>
                                     <th>ETH Block</th>
+                                    <th>Layer Block Number</th>
                                     <th>Bridge Balance (TRB)</th>
                                     <th>Layer Supply (TRB)</th>
                                     <th>Free Floating (TRB)</th>
@@ -83,7 +86,6 @@
                                     <th>Not Bonded</th>
                                     <th>Active Addresses</th>
                                     <th>Total Balance (TRB)</th>
-                                    <th>Completeness</th>
                                 </tr>
                             </thead>
                             <tbody id="historicalTableBody">

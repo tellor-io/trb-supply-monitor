@@ -43,6 +43,10 @@ ETHEREUM_RPC_URL = os.getenv('ETHEREUM_RPC_URL', 'https://rpc.sepolia.org')
 SEPOLIA_TRB_CONTRACT = os.getenv('SEPOLIA_TRB_CONTRACT', '0x80fc34a2f9FfE86F41580F47368289C402DEc660')
 SEPOLIA_BRIDGE_CONTRACT = os.getenv('SEPOLIA_BRIDGE_CONTRACT', '0x5acb5977f35b1A91C4fE0F4386eB669E046776F2')
 
+# Bridge CSV configuration with environment variable support
+BRIDGE_DEPOSITS_CSV_PATH = os.getenv('BRIDGE_DEPOSITS_CSV_PATH', 'example_bridge_deposits.csv')
+BRIDGE_WITHDRAWALS_CSV_PATH = os.getenv('BRIDGE_WITHDRAWALS_CSV_PATH', 'example_bridge_withdrawals.csv')
+
 # ERC20 ABI for balanceOf function
 ERC20_ABI = [
     {
@@ -108,6 +112,81 @@ class UnifiedDataCollector:
         
         logger.info("Unified data collector initialized")
     
+    def find_ethereum_block_for_timestamp(self, target_timestamp: int) -> Optional[int]:
+        """
+        Find the Ethereum block number for a given timestamp using binary search.
+        
+        Args:
+            target_timestamp: Unix timestamp to find block for
+            
+        Returns:
+            Ethereum block number at or before the target timestamp, or None if failed
+        """
+        if not self.w3:
+            logger.warning("Web3 not available, cannot find Ethereum block for timestamp")
+            return None
+            
+        try:
+            # Get current block as upper bound
+            current_block = self.w3.eth.get_block('latest')
+            high = int(current_block.get('number', 0))
+            current_timestamp = int(current_block.get('timestamp', 0))
+            
+            # If target timestamp is in the future, return None
+            if target_timestamp > current_timestamp:
+                logger.warning(f"Target timestamp {target_timestamp} is in the future")
+                return None
+            
+            # Start binary search
+            low = 1  # Genesis block
+            
+            logger.info(f"Searching Ethereum blocks {low} to {high} for timestamp {target_timestamp}")
+            
+            while low <= high:
+                mid = (low + high) // 2
+                
+                try:
+                    block = self.w3.eth.get_block(mid)
+                    block_timestamp = int(block.get('timestamp', 0))
+                    
+                    if block_timestamp < target_timestamp:
+                        low = mid + 1
+                    elif block_timestamp > target_timestamp:
+                        high = mid - 1
+                    else:
+                        # Exact match
+                        logger.info(f"Found exact Ethereum block match: {mid} at timestamp {block_timestamp}")
+                        return mid
+                        
+                except Exception as e:
+                    logger.warning(f"Error getting Ethereum block {mid}: {e}")
+                    # Adjust search range and continue
+                    if mid == low:
+                        low += 1
+                    elif mid == high:
+                        high -= 1
+                    else:
+                        high = mid - 1
+                    continue
+            
+            # Return the block at or before the target timestamp
+            if high > 0:
+                try:
+                    result_block = self.w3.eth.get_block(high)
+                    result_timestamp = int(result_block.get('timestamp', 0))
+                    logger.info(f"Found closest Ethereum block: {high} at timestamp {result_timestamp} (target: {target_timestamp})")
+                    return high
+                except Exception as e:
+                    logger.warning(f"Error verifying result block {high}: {e}")
+                    return high  # Return anyway, it's our best estimate
+            else:
+                logger.warning(f"Target timestamp {target_timestamp} is before genesis block")
+                return None
+                
+        except Exception as e:
+            logger.error(f"Error finding Ethereum block for timestamp {target_timestamp}: {e}")
+            return None
+
     def get_ethereum_block_range(self, 
                                 hours_back: int = 24, 
                                 block_interval: int = 300) -> List[Tuple[int, int]]:
@@ -128,8 +207,8 @@ class UnifiedDataCollector:
         try:
             # Get current block
             current_block = self.w3.eth.get_block('latest')
-            current_block_number = int(current_block['number'])
-            current_timestamp = int(current_block['timestamp'])
+            current_block_number = int(current_block.get('number', 0))
+            current_timestamp = int(current_block.get('timestamp', 0))
             
             # Calculate target timestamp range
             target_start_timestamp = current_timestamp - (hours_back * 3600)
@@ -151,7 +230,7 @@ class UnifiedDataCollector:
                     
                 try:
                     block = self.w3.eth.get_block(block_number)
-                    block_timestamp = int(block['timestamp'])
+                    block_timestamp = int(block.get('timestamp', 0))
                     
                     # Stop if we've gone back far enough
                     if block_timestamp < target_start_timestamp:
@@ -207,6 +286,100 @@ class UnifiedDataCollector:
             
         except Exception as e:
             logger.error(f"Error getting bridge balance for block {block_number}: {e}")
+            return None
+    
+    def calculate_historical_bridge_balance(self, target_timestamp: int, 
+                                          deposits_csv: Optional[str] = None,
+                                          withdrawals_csv: Optional[str] = None) -> Optional[float]:
+        """
+        Calculate historical bridge balance from CSV files up to a specific timestamp.
+        
+        Args:
+            target_timestamp: Unix timestamp to calculate balance up to
+            deposits_csv: Path to bridge deposits CSV file (uses env var if None)
+            withdrawals_csv: Path to bridge withdrawals CSV file (uses env var if None)
+            
+        Returns:
+            Bridge balance in TRB, or None if calculation failed
+        """
+        import csv
+        from datetime import datetime, timezone
+        from pathlib import Path
+        
+        # Use environment variables if paths not provided
+        if deposits_csv is None:
+            deposits_csv = BRIDGE_DEPOSITS_CSV_PATH
+        if withdrawals_csv is None:
+            withdrawals_csv = BRIDGE_WITHDRAWALS_CSV_PATH
+        
+        try:
+            total_deposits = 0.0
+            total_withdrawals = 0.0
+            
+            # Process deposits CSV
+            deposits_file = Path(deposits_csv)
+            if deposits_file.exists():
+                logger.info(f"Processing deposits from {deposits_file}")
+                with open(deposits_file, 'r') as f:
+                    reader = csv.DictReader(f)
+                    for row in reader:
+                        # Parse timestamp
+                        timestamp_str = row.get('Timestamp', '')
+                        if not timestamp_str:
+                            continue
+                            
+                        try:
+                            # Parse timestamp (format: "2025-06-20 13:24:27")
+                            deposit_time = datetime.strptime(timestamp_str, "%Y-%m-%d %H:%M:%S")
+                            deposit_time = deposit_time.replace(tzinfo=timezone.utc)
+                            deposit_timestamp = int(deposit_time.timestamp())
+                            
+                            # Only include deposits up to target timestamp
+                            if deposit_timestamp <= target_timestamp:
+                                amount_wei = int(row.get('Amount', 0))
+                                amount_trb = amount_wei / (10 ** 18)  # Convert from wei to TRB
+                                total_deposits += amount_trb
+                        except (ValueError, TypeError) as e:
+                            logger.warning(f"Error parsing deposit row: {e}")
+                            continue
+                            
+                logger.info(f"Total deposits up to timestamp {target_timestamp}: {total_deposits:.6f} TRB")
+            else:
+                logger.warning(f"Deposits file not found: {deposits_file}")
+            
+            # Process withdrawals CSV
+            withdrawals_file = Path(withdrawals_csv)
+            if withdrawals_file.exists():
+                logger.info(f"Processing withdrawals from {withdrawals_file}")
+                # Note: Withdrawals CSV doesn't have timestamps in the example
+                # For now, we'll assume all withdrawals happened before the target timestamp
+                # In a real implementation, you'd need timestamp data for withdrawals too
+                with open(withdrawals_file, 'r') as f:
+                    reader = csv.DictReader(f)
+                    for row in reader:
+                        try:
+                            # Amount appears to be in microTRB (6 decimals)
+                            amount_micro_trb = int(row.get('Amount', 0))
+                            amount_trb = amount_micro_trb / (10 ** 6)  # Convert from microTRB to TRB
+                            total_withdrawals += amount_trb
+                        except (ValueError, TypeError) as e:
+                            logger.warning(f"Error parsing withdrawal row: {e}")
+                            continue
+                            
+                logger.info(f"Total withdrawals: {total_withdrawals:.6f} TRB")
+            else:
+                logger.warning(f"Withdrawals file not found: {withdrawals_file}")
+            
+            # Calculate net bridge balance (deposits - withdrawals)
+            bridge_balance = total_deposits - total_withdrawals
+            
+            logger.info(f"Historical bridge balance calculated: {bridge_balance:.6f} TRB "
+                       f"(deposits: {total_deposits:.6f}, withdrawals: {total_withdrawals:.6f})")
+            
+            return bridge_balance
+            
+        except Exception as e:
+            logger.error(f"Error calculating historical bridge balance: {e}")
             return None
     
     def find_corresponding_layer_data(self, eth_timestamp: int, tolerance_hours: int = 2) -> Optional[Dict]:
@@ -292,11 +465,17 @@ class UnifiedDataCollector:
             # Calculate free floating TRB
             free_floating_trb = layer_supply_trb - not_bonded_tokens - bonded_tokens
             
+            # Find the corresponding Ethereum block number for this timestamp
+            eth_block_number = self.find_ethereum_block_for_timestamp(eth_timestamp)
+            if eth_block_number is None:
+                logger.warning(f"Could not find Ethereum block for timestamp {eth_timestamp}, using 0")
+                eth_block_number = 0
+            
             # Create historical data structure similar to current data
             historical_data = {
-                'eth_block_number': 0,  # Historical, no direct ETH block mapping
+                'eth_block_number': eth_block_number,  # Now using actual ETH block mapping
                 'eth_block_timestamp': eth_timestamp,
-                'bridge_balance_trb': 0.0,  # Cannot get historical bridge balance easily
+                'bridge_balance_trb': 0.0,
                 'layer_block_height': layer_height,
                 'layer_block_timestamp': layer_timestamp,
                 'layer_total_supply_trb': layer_supply_trb,
@@ -381,6 +560,8 @@ class UnifiedDataCollector:
             logger.error(f"Error collecting historical balance data for ETH timestamp {eth_timestamp}: {e}")
             return None
     
+
+    
     def collect_unified_snapshot(self, eth_block_number: int, eth_timestamp: int) -> bool:
         """
         Collect a complete unified snapshot for a specific Ethereum block.
@@ -403,7 +584,15 @@ class UnifiedDataCollector:
         
         # Collect bridge data
         logger.info("Collecting bridge balance data...")
-        bridge_balance = self.collect_bridge_data_for_block(eth_block_number, eth_timestamp)
+        if eth_block_number > 0:
+            # For real-time data, get bridge balance from Ethereum contract
+            bridge_balance = self.collect_bridge_data_for_block(eth_block_number, eth_timestamp)
+        else:
+            # For historical data, calculate bridge balance from CSV files
+            bridge_balance = self.calculate_historical_bridge_balance(eth_timestamp)
+            if bridge_balance is None:
+                logger.error("Failed to calculate historical bridge balance from CSV files")
+                bridge_balance = 0.0
         
         # Collect layer supply data
         logger.info("Collecting layer supply data...")
@@ -511,8 +700,8 @@ class UnifiedDataCollector:
         updated_count = 0
         
         for snapshot in incomplete_snapshots:
-            eth_block_number = snapshot['eth_block_number']
-            eth_timestamp = snapshot['eth_block_timestamp']
+            eth_block_number = snapshot.get('eth_block_number', 0)
+            eth_timestamp = snapshot.get('eth_block_timestamp', 0)
             current_score = snapshot.get('data_completeness_score', 0)
             
             logger.info(f"Backfilling data for ETH block {eth_block_number} "

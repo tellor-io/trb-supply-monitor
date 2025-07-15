@@ -159,6 +159,7 @@ async def get_unified_timeline(
                 "eth_timestamp": snapshot.get('eth_block_timestamp'),
                 "eth_datetime": snapshot.get('eth_block_datetime'),
                 "eth_block_number": snapshot.get('eth_block_number'),
+                "layer_block_height": snapshot.get('layer_block_height', 0),
                 "bridge_balance_trb": snapshot.get('bridge_balance_trb'),
                 "layer_total_supply_trb": snapshot.get('layer_total_supply_trb'),
                 "not_bonded_tokens": snapshot.get('not_bonded_tokens'),

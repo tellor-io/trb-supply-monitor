@@ -6,7 +6,7 @@ class HistoricalDashboard {
         this.currentPage = 0;
         this.currentLimit = 100;
         this.currentSearch = '';
-        this.currentTimeRange = 24;
+        this.currentTimeRange = 8760;
         this.historicalData = [];
         this.charts = {
             supply: null,
@@ -99,9 +99,6 @@ class HistoricalDashboard {
             }
             
             const datetime = new Date(timestamp * 1000);
-            const completenessScore = snapshot.completeness_score || snapshot.data_completeness_score || 0;
-            const completenessClass = completenessScore >= 0.8 ? 'text-primary' : 
-                                    completenessScore >= 0.5 ? 'text-accent' : 'text-muted';
             
             return `
                 <tr title="ETH Block: ${snapshot.eth_block_number || 'N/A'}">
@@ -111,6 +108,9 @@ class HistoricalDashboard {
                     </td>
                     <td class="font-mono text-xs">
                         ${this.formatNumber(snapshot.eth_block_number) || 'N/A'}
+                    </td>
+                    <td class="font-mono text-xs">
+                        ${this.formatNumber(snapshot.layer_block_height) || 'N/A'}
                     </td>
                     <td class="font-mono text-primary">
                         ${this.formatTRB(snapshot.bridge_balance_trb)}
@@ -136,11 +136,6 @@ class HistoricalDashboard {
                     </td>
                     <td class="font-mono text-accent">
                         ${this.formatTRB(snapshot.total_trb_balance)}
-                    </td>
-                    <td class="text-center">
-                        <span class="badge ${completenessClass}" style="font-size: 0.7rem;">
-                            ${(completenessScore * 100).toFixed(0)}%
-                        </span>
                     </td>
                 </tr>
             `;
