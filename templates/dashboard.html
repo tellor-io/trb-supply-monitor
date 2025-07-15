@@ -1,0 +1,218 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Tellor Supply Analytics - Historical Dashboard</title>
+    <link rel="stylesheet" href="/static/css/unified-style-template.css">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
+</head>
+<body>
+    <div class="app">
+        <!-- Navigation -->
+        <nav class="nav">
+            <ul class="nav-list">
+                <li><a href="#" class="nav-link active" data-section="dashboard">Historical Dashboard</a></li>
+                <li><a href="#" class="nav-link" data-section="timeline">Timeline</a></li>
+                <li><a href="#" class="nav-link" data-section="balances">Balances</a></li>
+                <li><a href="#" class="nav-link" data-section="analytics">Analytics</a></li>
+            </ul>
+        </nav>
+
+        <!-- Main Content -->
+        <main class="main">
+            <!-- Historical Data Table Section -->
+            <section class="card mb-xl" id="historicalSection">
+                <div class="card-header">
+                    <h1>Historical Supply Data - Last 24 Hours</h1>
+                    <div class="flex gap-sm">
+                        <button class="btn btn-sm btn-primary" id="refreshHistoryBtn">
+                            <i class="fas fa-sync-alt"></i>
+                            Refresh Timeline
+                        </button>
+                        <button class="btn btn-sm btn-secondary" id="collectUnifiedBtn">
+                            <i class="fas fa-database"></i>
+                            Trigger Collection
+                        </button>
+                        <select id="timeRangeSelect" class="form-input" style="width: auto;">
+                            <option value="6">Last 6 hours</option>
+                            <option value="12">Last 12 hours</option>
+                            <option value="24">Last 24 hours</option>
+                            <option value="48">Last 48 hours</option>
+                            <option value="72">Last 72 hours</option>
+                            <option value="168">Last 7 days</option>
+                            <option value="720">Last 30 days</option>
+                            <option value="8760" selected>All Available Data</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="card-body">
+                    <div class="mb-md" id="timelineStats">
+                        <div class="grid grid-cols-4 gap-md">
+                            <div class="text-center">
+                                <div class="stat-number text-sm" id="timelineCount">--</div>
+                                <div class="text-xs text-muted">Data Points</div>
+                            </div>
+                            <div class="text-center">
+                                <div class="stat-number text-sm" id="timelineCompleteness">--</div>
+                                <div class="text-xs text-muted">Avg Completeness</div>
+                            </div>
+                            <div class="text-center">
+                                <div class="stat-number text-sm" id="timelineLatest">--</div>
+                                <div class="text-xs text-muted">Latest Data</div>
+                            </div>
+                            <div class="text-center">
+                                <div class="stat-number text-sm" id="timelineOldest">--</div>
+                                <div class="text-xs text-muted">Oldest Data</div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="table-container" style="max-height: 500px; overflow-y: auto;">
+                        <table class="data-table" id="historicalTable">
+                            <thead style="position: sticky; top: 0; background: var(--bg-secondary);">
+                                <tr>
+                                    <th>Timestamp</th>
+                                    <th>ETH Block</th>
+                                    <th>Layer Block Number</th>
+                                    <th>Bridge Balance (TRB)</th>
+                                    <th>Layer Supply (TRB)</th>
+                                    <th>Free Floating (TRB)</th>
+                                    <th>Bonded Tokens</th>
+                                    <th>Not Bonded</th>
+                                    <th>Active Addresses</th>
+                                    <th>Total Balance (TRB)</th>
+                                </tr>
+                            </thead>
+                            <tbody id="historicalTableBody">
+                                <tr>
+                                    <td colspan="10" class="text-center">Loading historical data...</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Current Stats Summary -->
+            <section class="mb-xl" id="statsSection">
+                <h2 class="mb-lg">Current TRB Supply Metrics</h2>
+                <div class="grid grid-auto-fit gap-lg" id="statsGrid">
+                    <!-- Stats will be loaded dynamically -->
+                    <div class="stat-card">
+                        <div class="stat-icon">
+                            <i class="fas fa-spinner fa-spin"></i>
+                        </div>
+                        <div class="stat-content">
+                            <div class="stat-number">Loading...</div>
+                            <div class="stat-title">Total Addresses</div>
+                            <div class="stat-subtitle">Loading data...</div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Timeline Charts Section -->
+            <section class="card mb-xl" id="chartsSection">
+                <div class="card-header">
+                    <h2>Supply Trends</h2>
+                    <div class="flex gap-sm">
+                        <button class="btn btn-sm btn-primary" id="toggleSupplyChart" data-active="true">
+                            <i class="fas fa-chart-line"></i>
+                            Supply Overview
+                        </button>
+                        <button class="btn btn-sm btn-outline" id="toggleBridgeChart" data-active="false">
+                            <i class="fas fa-exchange-alt"></i>
+                            Bridge & Staking
+                        </button>
+                        <button class="btn btn-sm btn-outline" id="toggleBalanceChart" data-active="false">
+                            <i class="fas fa-wallet"></i>
+                            Active Balances
+                        </button>
+                    </div>
+                </div>
+                <div class="card-body">
+                    <!-- Supply Overview Chart -->
+                    <div id="supplyChartContainer" class="chart-container">
+                        <canvas id="supplyChart" width="400" height="200"></canvas>
+                    </div>
+                    
+                    <!-- Bridge & Staking Chart -->
+                    <div id="bridgeChartContainer" class="chart-container hidden">
+                        <canvas id="bridgeChart" width="400" height="200"></canvas>
+                    </div>
+                    
+                    <!-- Active Balances Chart -->
+                    <div id="balanceChartContainer" class="chart-container hidden">
+                        <canvas id="balanceChart" width="400" height="200"></canvas>
+                    </div>
+                    
+                    <!-- Chart Loading State -->
+                    <div id="chartLoading" class="text-center text-muted hidden">
+                        <i class="fas fa-spinner fa-spin"></i>
+                        <span>Loading chart data...</span>
+                    </div>
+                    
+                    <!-- No Data State -->
+                    <div id="chartNoData" class="text-center text-muted hidden">
+                        <i class="fas fa-chart-line"></i>
+                        <div>No data available for charts</div>
+                        <small>Try collecting data or selecting a different time range</small>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Active Balances Section -->
+            <section class="card" id="balancesSection">
+                <div class="card-header">
+                    <h2>Current Active Balances</h2>
+                    <div class="flex gap-sm">
+                        <button class="btn btn-sm btn-primary" id="refreshBtn">
+                            <i class="fas fa-sync-alt"></i>
+                            Refresh Data
+                        </button>
+                        <button class="btn btn-sm btn-secondary" id="collectBtn">
+                            <i class="fas fa-database"></i>
+                            Trigger Collection
+                        </button>
+                        <button class="btn btn-sm btn-primary" id="exportDataBtn">
+                            <i class="fas fa-download"></i>
+                            Export Data
+                        </button>
+                    </div>
+                </div>
+                <div class="table-container" id="tableContainer">
+                    <table class="data-table" id="balancesTable">
+                        <thead>
+                            <tr>
+                                <th>Address</th>
+                                <th>Account Type</th>
+                                <th>TRB Balance</th>
+                                <th>Last Updated</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody id="balancesTableBody">
+                            <tr>
+                                <td colspan="5" class="text-center">Loading balance data...</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </section>
+        </main>
+    </div>
+
+    <!-- Loading Overlay -->
+    <div class="loading-overlay hidden" id="loadingOverlay">
+        <div class="spinner"></div>
+        <div class="loading-text">Loading data...</div>
+    </div>
+
+    <script src="/static/js/dashboard.js"></script>
+</body>
+</html>

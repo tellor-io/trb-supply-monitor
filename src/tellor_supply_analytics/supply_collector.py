@@ -37,6 +37,13 @@ except ImportError:
     DiscordWebhook = None
     DiscordEmbed = None
 
+# Import local database module
+try:
+    from .database import BalancesDatabase
+except (ImportError, ModuleNotFoundError):
+    print("Warning: BalancesDatabase not available. Database storage will be disabled.")
+    BalancesDatabase = None
+
 # Load environment variables
 load_dotenv()
 
@@ -85,11 +92,32 @@ ERC20_ABI = [
 class SupplyDataCollector:
     """Collects token supply data from multiple blockchain sources."""
     
-    def __init__(self):
-        """Initialize the supply data collector."""
+    def __init__(self, db_path: str = 'tellor_balances.db', use_csv: bool = True):
+        """
+        Initialize the supply data collector.
+        
+        Args:
+            db_path: Path to SQLite database file
+            use_csv: Whether to also maintain CSV file for backward compatibility
+        """
         self.layerd_path = './layerd'
         self.csv_file = CSV_FILE
-        self.initialize_csv()
+        self.use_csv = use_csv
+        
+        # Initialize database
+        if BalancesDatabase:
+            try:
+                self.db = BalancesDatabase(db_path)
+                logger.info(f"Database initialized: {db_path}")
+            except Exception as e:
+                logger.error(f"Failed to initialize database: {e}")
+                self.db = None
+        else:
+            self.db = None
+            logger.warning("Database storage not available - using CSV only")
+        
+        if self.use_csv:
+            self.initialize_csv()
         
         # Initialize Web3 connection
         try:
@@ -456,6 +484,33 @@ class SupplyDataCollector:
         
         return timestamps
 
+    def save_data(self, data: Dict, collection_run_id: Optional[int] = None) -> Optional[int]:
+        """
+        Save supply data to database and optionally to CSV.
+        
+        Args:
+            data: Supply data dictionary
+            collection_run_id: Optional collection run ID to link the data
+            
+        Returns:
+            Supply data ID if saved to database, None otherwise
+        """
+        supply_data_id = None
+        
+        # Save to database if available
+        if self.db:
+            try:
+                supply_data_id = self.db.save_supply_data(data, collection_run_id)
+                logger.info(f"Data saved to database with ID: {supply_data_id}")
+            except Exception as e:
+                logger.error(f"Error saving to database: {e}")
+        
+        # Save to CSV if enabled
+        if self.use_csv:
+            self.save_to_csv(data)
+        
+        return supply_data_id
+    
     def save_to_csv(self, data: Dict):
         """Save data to CSV file."""
         try:
@@ -465,6 +520,18 @@ class SupplyDataCollector:
             logger.info(f"Data saved to {self.csv_file}")
         except Exception as e:
             logger.error(f"Error saving to CSV: {e}")
+    
+    def get_last_data(self) -> Optional[Dict]:
+        """Get the last supply data record from database or CSV."""
+        # Try database first
+        if self.db:
+            try:
+                return self.db.get_latest_supply_data()
+            except Exception as e:
+                logger.error(f"Error getting latest data from database: {e}")
+        
+        # Fallback to CSV
+        return self.get_last_csv_row()
     
     def get_last_csv_row(self) -> Optional[Dict]:
         """Get the last row from the CSV file."""
@@ -481,6 +548,18 @@ class SupplyDataCollector:
         except Exception as e:
             logger.error(f"Error reading last CSV row: {e}")
             return None
+    
+    def get_supply_data_history(self, limit: int = 100) -> List[Dict]:
+        """Get historical supply data from database or CSV."""
+        if self.db:
+            try:
+                return self.db.get_supply_data_history(limit)
+            except Exception as e:
+                logger.error(f"Error getting supply data history from database: {e}")
+        
+        # For CSV fallback, we would need to implement CSV reading logic
+        logger.warning("Database not available and CSV history reading not implemented")
+        return []
     
     def send_discord_alert(self, title: str, description: str, color: int = 0x00FF00):
         """Send a Discord webhook alert."""
@@ -586,6 +665,46 @@ class SupplyDataCollector:
     
     def get_data_24_hours_ago(self, current_timestamp: int) -> Optional[Dict]:
         """Get data from approximately 24 hours ago."""
+        from datetime import timedelta
+        
+        # Calculate target time (24 hours ago)
+        current_time = datetime.fromtimestamp(current_timestamp, tz=timezone.utc)
+        target_time = current_time - timedelta(hours=24)
+        start_time = target_time - timedelta(hours=2)  # 2 hour tolerance before
+        end_time = target_time + timedelta(hours=2)    # 2 hour tolerance after
+        
+        # Try database first
+        if self.db:
+            try:
+                data_range = self.db.get_supply_data_by_timerange(
+                    start_time.isoformat(),
+                    end_time.isoformat()
+                )
+                
+                if data_range:
+                    # Find the closest data point to target_time
+                    closest_data = None
+                    closest_diff = float('inf')
+                    target_timestamp = int(target_time.timestamp())
+                    
+                    for record in data_range:
+                        if record.get('layer_block_timestamp'):
+                            record_timestamp = int(record['layer_block_timestamp'])
+                            diff = abs(record_timestamp - target_timestamp)
+                            
+                            if diff < closest_diff:
+                                closest_diff = diff
+                                closest_data = record
+                    
+                    if closest_data:
+                        hours_diff = closest_diff / 3600  # Convert seconds to hours
+                        logger.info(f"Found data from {hours_diff:.1f} hours ago for 24h comparison (database)")
+                        return closest_data
+                        
+            except Exception as e:
+                logger.error(f"Error reading historical data from database: {e}")
+        
+        # Fallback to CSV method
         try:
             # Calculate target timestamp (24 hours ago)
             target_timestamp = current_timestamp - 86400
@@ -623,10 +742,9 @@ class SupplyDataCollector:
                     closest_data['layer_block_timestamp'] = int(closest_data.get('layer_block_timestamp', 0))
                     closest_data['layer_block_height'] = int(closest_data.get('layer_block_height', 0))
                     closest_data['free_floating_trb'] = float(closest_data.get('free_floating_trb', 0))
-                    print(f"closest_data: {closest_data}")
                     
                     hours_diff = min_time_diff / 3600  # Convert seconds to hours
-                    logger.info(f"Found data from {hours_diff:.1f} hours ago for 24h comparison")
+                    logger.info(f"Found data from {hours_diff:.1f} hours ago for 24h comparison (CSV)")
                     return closest_data
                     
                 except (ValueError, TypeError) as e:
@@ -844,7 +962,7 @@ class SupplyDataCollector:
                 'free_floating_trb': free_floating_trb
             }
             
-            self.save_to_csv(data)
+            self.save_data(data)
             successful_collections += 1
             
             logger.info(f"Successfully collected data for height {current_height}")
@@ -887,13 +1005,13 @@ class SupplyDataCollector:
             return
         
         # Collect current data
-        previous_data = self.get_last_csv_row()
+        previous_data = self.get_last_data()
         current_data = self.collect_current_data()
         if current_data:
             # Check for alerts before saving new data
             self.check_bonded_tokens_alert(current_data, previous_data)
             
-            self.save_to_csv(current_data)
+            self.save_data(current_data)
             logger.info("Current data collection completed successfully")
         else:
             logger.error("Failed to collect current data")
@@ -915,7 +1033,7 @@ class SupplyDataCollector:
                 logger.info("Collecting current data...")
                 
                 # Get previous data for comparison
-                previous_data = self.get_last_csv_row()
+                previous_data = self.get_last_data()
                 
                 current_data = self.collect_current_data()
                 
@@ -930,7 +1048,7 @@ class SupplyDataCollector:
                         historical_data = self.get_data_24_hours_ago(current_timestamp)
                         self.send_daily_summary_alert(current_data, historical_data)
                     
-                    self.save_to_csv(current_data)
+                    self.save_data(current_data)
                     logger.info("Current data collection completed successfully")
                     logger.info(f"Next collection in {CURRENT_DATA_INTERVAL} seconds")
                 else:
@@ -968,6 +1086,16 @@ def main():
         help='Test the daily alert functionality by sending it immediately'
     )
     parser.add_argument(
+        '--db-path',
+        default='tellor_balances.db',
+        help='Path to SQLite database file'
+    )
+    parser.add_argument(
+        '--no-csv',
+        action='store_true',
+        help='Disable CSV output (database only)'
+    )
+    parser.add_argument(
         '--debug',
         action='store_true',
         help='Enable debug logging'
@@ -978,7 +1106,10 @@ def main():
     if args.debug:
         logging.getLogger().setLevel(logging.DEBUG)
     
-    collector = SupplyDataCollector()
+    collector = SupplyDataCollector(
+        db_path=args.db_path,
+        use_csv=not args.no_csv
+    )
     collector.run(
         collect_historical=args.historical, 
         monitor=args.monitor,

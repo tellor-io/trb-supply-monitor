@@ -1,0 +1,2 @@
+# This file ensures the database_exports/ folder is tracked by git
+# while all other files in this folder are ignored 
