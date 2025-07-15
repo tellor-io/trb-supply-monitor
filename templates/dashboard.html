@@ -26,6 +26,36 @@
 
         <!-- Main Content -->
         <main class="main">
+            <!-- Timeline Charts Section - Moved to top -->
+            <section class="card mb-xl" id="chartsSection">
+                <div class="card-header">
+                    <h2>Supply Trends</h2>
+                </div>
+                <div class="card-body">
+                    <!-- Supply Overview Chart -->
+                    <div id="supplyChartContainer" class="chart-container mb-lg">
+                        <canvas id="supplyChart" width="400" height="200"></canvas>
+                    </div>
+                    
+                    <!-- Bridge & Staking Chart -->
+                    <div id="bridgeChartContainer" class="chart-container mb-lg">
+                        <canvas id="bridgeChart" width="400" height="200"></canvas>
+                    </div>
+                    
+                    <!-- Active Balances Chart -->
+                    <div id="balanceChartContainer" class="chart-container mb-lg">
+                        <canvas id="balanceChart" width="400" height="200"></canvas>
+                    </div>
+                    
+                    <!-- No Data State -->
+                    <div id="chartNoData" class="text-center text-muted hidden">
+                        <i class="fas fa-chart-line"></i>
+                        <div>No data available for charts</div>
+                        <small>Try collecting data or selecting a different time range</small>
+                    </div>
+                </div>
+            </section>
+
             <!-- Historical Data Table Section -->
             <section class="card mb-xl" id="historicalSection">
                 <div class="card-header">
@@ -104,50 +134,6 @@
                             <div class="stat-title">Total Addresses</div>
                             <div class="stat-subtitle">Loading data...</div>
                         </div>
-                    </div>
-                </div>
-            </section>
-
-            <!-- Timeline Charts Section -->
-            <section class="card mb-xl" id="chartsSection">
-                <div class="card-header">
-                    <h2>Supply Trends</h2>
-                    <div class="flex gap-sm">
-                        <button class="btn btn-sm btn-primary" id="toggleSupplyChart" data-active="true">
-                            <i class="fas fa-chart-line"></i>
-                            Supply Overview
-                        </button>
-                        <button class="btn btn-sm btn-outline" id="toggleBridgeChart" data-active="false">
-                            <i class="fas fa-exchange-alt"></i>
-                            Bridge & Staking
-                        </button>
-                        <button class="btn btn-sm btn-outline" id="toggleBalanceChart" data-active="false">
-                            <i class="fas fa-wallet"></i>
-                            Active Balances
-                        </button>
-                    </div>
-                </div>
-                <div class="card-body">
-                    <!-- Supply Overview Chart -->
-                    <div id="supplyChartContainer" class="chart-container">
-                        <canvas id="supplyChart" width="400" height="200"></canvas>
-                    </div>
-                    
-                    <!-- Bridge & Staking Chart -->
-                    <div id="bridgeChartContainer" class="chart-container hidden">
-                        <canvas id="bridgeChart" width="400" height="200"></canvas>
-                    </div>
-                    
-                    <!-- Active Balances Chart -->
-                    <div id="balanceChartContainer" class="chart-container hidden">
-                        <canvas id="balanceChart" width="400" height="200"></canvas>
-                    </div>
-                    
-                    <!-- No Data State -->
-                    <div id="chartNoData" class="text-center text-muted hidden">
-                        <i class="fas fa-chart-line"></i>
-                        <div>No data available for charts</div>
-                        <small>Try collecting data or selecting a different time range</small>
                     </div>
                 </div>
             </section>
