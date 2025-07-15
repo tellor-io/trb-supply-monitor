@@ -8,6 +8,7 @@ accounts_example.json
 uv.lock
 # Python cache files
 __pycache__/
+src/tellor_supply_analytics/__pycache__/
 *.py[cod]
 *$py.class
 *.so
