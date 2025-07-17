@@ -10,8 +10,14 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import HTMLResponse, FileResponse
 from typing import List, Dict, Optional
 import logging
+import requests
+import subprocess
+import json
+import sys
+import os
 from datetime import datetime
 from pathlib import Path
+from web3 import Web3
 
 # Local imports
 from src.tellor_supply_analytics.database import BalancesDatabase
@@ -24,12 +30,192 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# Configuration from environment
+TELLOR_LAYER_RPC_URL = os.getenv('TELLOR_LAYER_RPC_URL')
+LAYER_GRPC_URL = os.getenv('LAYER_GRPC_URL')
+ETHEREUM_RPC_URL = os.getenv('ETHEREUM_RPC_URL')
+
+def check_tellor_layer_rpc() -> bool:
+    """
+    Check if Tellor Layer RPC is responding.
+    
+    Returns:
+        True if RPC is responding, False otherwise
+    """
+    try:
+        logger.info(f"Checking Tellor Layer RPC connection: {TELLOR_LAYER_RPC_URL}")
+        
+        # Try using layerd status command if available
+        try:
+            result = subprocess.run(
+                ['./layerd', 'status', '--output', 'json', '--node', TELLOR_LAYER_RPC_URL],
+                capture_output=True,
+                text=True,
+                timeout=10
+            )
+            
+            if result.returncode == 0:
+                status_data = json.loads(result.stdout)
+                latest_height = status_data.get('sync_info', {}).get('latest_block_height')
+                if latest_height:
+                    logger.info(f"Tellor Layer RPC responding - Latest block height: {latest_height}")
+                    return True
+            else:
+                logger.warning(f"layerd status command failed: {result.stderr}")
+        except (subprocess.TimeoutExpired, FileNotFoundError, json.JSONDecodeError) as e:
+            logger.warning(f"layerd command failed, trying direct RPC call: {e}")
+        
+        # Fallback: Try direct RPC call
+        response = requests.post(
+            TELLOR_LAYER_RPC_URL,
+            json={
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "status",
+                "params": []
+            },
+            timeout=10
+        )
+        
+        if response.status_code == 200:
+            data = response.json()
+            if 'result' in data:
+                sync_info = data['result'].get('sync_info', {})
+                latest_height = sync_info.get('latest_block_height')
+                if latest_height:
+                    logger.info(f"Tellor Layer RPC responding - Latest block height: {latest_height}")
+                    return True
+        
+        logger.error(f"Tellor Layer RPC not responding properly. Status: {response.status_code}")
+        return False
+        
+    except requests.RequestException as e:
+        logger.error(f"Failed to connect to Tellor Layer RPC: {e}")
+        return False
+    except Exception as e:
+        logger.error(f"Unexpected error checking Tellor Layer RPC: {e}")
+        return False
+
+def check_ethereum_rpc() -> bool:
+    """
+    Check if Ethereum RPC is responding.
+    
+    Returns:
+        True if RPC is responding, False otherwise
+    """
+    try:
+        logger.info(f"Checking Ethereum RPC connection: {ETHEREUM_RPC_URL}")
+        
+        w3 = Web3(Web3.HTTPProvider(ETHEREUM_RPC_URL))
+        
+        if not w3.is_connected():
+            logger.error("Ethereum RPC connection failed")
+            return False
+        
+        # Try to get the latest block
+        latest_block = w3.eth.get_block('latest')
+        block_number = latest_block.get('number')
+        
+        if block_number:
+            logger.info(f"Ethereum RPC responding - Latest block number: {block_number}")
+            return True
+        else:
+            logger.error("Ethereum RPC responded but could not get block number")
+            return False
+            
+    except Exception as e:
+        logger.error(f"Failed to connect to Ethereum RPC: {e}")
+        return False
+
+def check_tellor_layer_grpc() -> bool:
+    """
+    Check if Tellor Layer GRPC endpoint is responding.
+    
+    Returns:
+        True if GRPC is responding, False otherwise
+    """
+    try:
+        logger.info(f"Checking Tellor Layer GRPC connection: {LAYER_GRPC_URL}")
+        
+        # Try to get node info from GRPC endpoint
+        response = requests.get(
+            f"{LAYER_GRPC_URL.rstrip('/')}/cosmos/base/tendermint/v1beta1/node_info",
+            timeout=10
+        )
+        
+        if response.status_code == 200:
+            data = response.json()
+            node_info = data.get('default_node_info', {})
+            if node_info:
+                network = node_info.get('network', 'unknown')
+                version = node_info.get('version', 'unknown')
+                logger.info(f"Tellor Layer GRPC responding - Network: {network}, Version: {version}")
+                return True
+        
+        logger.error(f"Tellor Layer GRPC not responding properly. Status: {response.status_code}")
+        return False
+        
+    except requests.RequestException as e:
+        logger.error(f"Failed to connect to Tellor Layer GRPC: {e}")
+        return False
+    except Exception as e:
+        logger.error(f"Unexpected error checking Tellor Layer GRPC: {e}")
+        return False
+
+def perform_startup_health_checks():
+    """
+    Perform all RPC health checks during startup.
+    Exit the program if any critical RPC is not responding.
+    """
+    logger.info("=== STARTING RPC HEALTH CHECKS ===")
+    
+    checks_passed = 0
+    total_checks = 3
+    
+    # Check Tellor Layer RPC (critical)
+    if check_tellor_layer_rpc():
+        checks_passed += 1
+    else:
+        logger.error("❌ CRITICAL: Tellor Layer RPC is not responding!")
+        logger.error(f"   URL: {TELLOR_LAYER_RPC_URL}")
+        logger.error("   This RPC is required for blockchain queries.")
+        sys.exit(1)
+    
+    # Check Ethereum RPC (critical)
+    if check_ethereum_rpc():
+        checks_passed += 1
+    else:
+        logger.error("❌ CRITICAL: Ethereum RPC is not responding!")
+        logger.error(f"   URL: {ETHEREUM_RPC_URL}")
+        logger.error("   This RPC is required for bridge balance queries.")
+        sys.exit(1)
+    
+    # Check Tellor Layer GRPC (non-critical but important)
+    if check_tellor_layer_grpc():
+        checks_passed += 1
+    else:
+        logger.warning("⚠️  WARNING: Tellor Layer GRPC is not responding")
+        logger.warning(f"   URL: {LAYER_GRPC_URL}")
+        logger.warning("   Some balance collection features may not work properly.")
+    
+    logger.info(f"=== HEALTH CHECKS COMPLETED: {checks_passed}/{total_checks} PASSED ===")
+    if checks_passed >= 2:  # At least RPC endpoints working
+        logger.info("✅ Minimum required RPCs are responding. Starting API server...")
+    else:
+        logger.error("❌ CRITICAL: Insufficient RPC endpoints responding. Exiting...")
+        sys.exit(1)
+
 # Initialize FastAPI app
 app = FastAPI(
     title="Tellor Layer Balance Analytics API",
     description="API for accessing Tellor Layer active balance data",
     version="1.0.0"
 )
+
+@app.on_event("startup")
+async def startup_event():
+    """Run startup health checks when the API starts."""
+    perform_startup_health_checks()
 
 # Initialize database
 db = BalancesDatabase()
@@ -477,6 +663,9 @@ if __name__ == "__main__":
     Path("templates").mkdir(exist_ok=True)
     Path("static/css").mkdir(parents=True, exist_ok=True)
     Path("static/js").mkdir(parents=True, exist_ok=True)
+    
+    # Perform health checks before starting the API server
+    perform_startup_health_checks()
     
     logger.info("Starting Tellor Balance Analytics API")
     uvicorn.run(
