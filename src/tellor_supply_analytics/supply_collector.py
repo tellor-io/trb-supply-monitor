@@ -413,33 +413,32 @@ class SupplyDataCollector:
         if current_height is None:
             logger.error("Failed to get current height from Tellor Layer")
             return None
+            
+        logger.info(f"Using block height {current_height} for all queries")
         
-        # Try to find a valid height by going backwards
-        layer_block_time = None
-        layer_supply = None
+        # Get block info at this height
+        block_info = self.get_block_info(current_height)
+        if not block_info:
+            logger.error(f"Failed to get block info for height {current_height}")
+            return None
+            
+        layer_block_time = block_info[1]  # Unix timestamp
         
-        for height in range(current_height, current_height - 10000, -100):
-            block_info = self.get_block_info(height)
-            if block_info:
-                layer_block_time = block_info[1]  # Unix timestamp
-                layer_supply = self.get_total_supply(height)
-                if layer_supply is not None:
-                    current_height = height
-                    break
-        
-        if layer_block_time is None or layer_supply is None:
-            logger.error("Failed to get Tellor Layer data")
+        # Get supply at this height
+        layer_supply = self.get_total_supply(current_height)
+        if layer_supply is None:
+            logger.error(f"Failed to get supply for height {current_height}")
             return None
         
         # Convert supply from loya to TRB (assuming 18 decimals)
         layer_supply_trb = layer_supply / (10 ** 6)
         
-        # Get current staking pool data
-        staking_pool_data = self.get_staking_pool()
+        # Get staking pool data at this height
+        staking_pool_data = self.get_staking_pool(current_height)
         if staking_pool_data:
             not_bonded_tokens, bonded_tokens = staking_pool_data
         else:
-            logger.warning("Failed to get staking pool data, using placeholder values")
+            logger.warning(f"Failed to get staking pool data for height: {current_height}")
             not_bonded_tokens = 0
             bonded_tokens = 0
         

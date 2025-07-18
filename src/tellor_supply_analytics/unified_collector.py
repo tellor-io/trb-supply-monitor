@@ -617,6 +617,31 @@ class UnifiedDataCollector:
                 logger.error(f"Could not find Ethereum block for timestamp {eth_timestamp}")
                 return False
             eth_block_number = found_block
+
+        # *** CRITICAL FIX: Resolve Tellor Layer block height ONCE for timestamp consistency ***
+        resolved_layer_height: int
+        resolved_layer_timestamp: int
+        
+        if layer_block_height is None:
+            # Find the corresponding Tellor Layer block for this Ethereum timestamp
+            logger.info(f"Resolving Tellor Layer block for ETH timestamp {eth_timestamp}...")
+            layer_block_info = find_layer_block_for_eth_timestamp(eth_timestamp)
+            if layer_block_info is None:
+                logger.error("Could not find corresponding Tellor Layer block, skipping snapshot")
+                return False
+            
+            resolved_layer_height, layer_time, resolved_layer_timestamp = layer_block_info
+            logger.info(f"Resolved to Tellor Layer block {resolved_layer_height} at {layer_time}")
+        else:
+            resolved_layer_height = layer_block_height
+            # Get the timestamp for the specified layer block height
+            block_info = self.supply_collector.get_block_info(layer_block_height)
+            if block_info:
+                resolved_layer_timestamp = block_info[1]
+                logger.info(f"Using specified Tellor Layer block {layer_block_height} with timestamp {resolved_layer_timestamp}")
+            else:
+                logger.warning(f"Could not get timestamp for specified layer block {layer_block_height}, using ETH timestamp")
+                resolved_layer_timestamp = eth_timestamp
         
         # Collect bridge data
         logger.info("Collecting bridge balance data...")
@@ -628,38 +653,26 @@ class UnifiedDataCollector:
                 logger.error("Failed to calculate historical bridge balance from CSV files")
                 bridge_balance = 0.0
         
-        # Collect layer supply data
-        logger.info("Collecting layer supply data...")
-        if layer_block_height is not None:
-            # Use the specific layer block height provided by the user
-            logger.info(f"Using user-specified Tellor Layer block height: {layer_block_height}")
-            supply_data = self.collect_historical_layer_data(layer_block_height, eth_timestamp, eth_timestamp)
-        else:
-            # Find corresponding layer data using timestamp lookup
-            supply_data = self.find_corresponding_layer_data(eth_timestamp)
-            
-            # If we couldn't find corresponding layer data, skip this snapshot
-            if supply_data is None:
-                logger.error("Could not find corresponding Tellor Layer data, skipping snapshot")
-                return False
+        # Collect layer supply data using the resolved layer height
+        logger.info(f"Collecting layer supply data at Tellor Layer block height {resolved_layer_height}...")
+        supply_data = self.collect_historical_layer_data(resolved_layer_height, resolved_layer_timestamp, eth_timestamp)
         
-        # Collect balance data
-        logger.info("Collecting balance data...")
-        if layer_block_height is not None:
-            # For specific layer block height, collect balances at that height
-            logger.info(f"Collecting balance data at Tellor Layer block height: {layer_block_height}")
-            
-            # Get active addresses first
-            addresses = self.balance_collector.get_all_addresses()
-            if not addresses:
-                logger.error("Failed to get active addresses")
-                balance_data = None
-            else:
-                # Collect balances at the specific height
-                balance_data = self.balance_collector.collect_balances_at_height(addresses, layer_block_height)
+        # If we couldn't collect layer supply data, skip this snapshot
+        if supply_data is None:
+            logger.error("Could not collect Tellor Layer supply data, skipping snapshot")
+            return False
+        
+        # Collect balance data using the SAME resolved layer height
+        logger.info(f"Collecting balance data at Tellor Layer block height {resolved_layer_height}...")
+        
+        # Get active addresses first
+        addresses = self.balance_collector.get_all_addresses()
+        if not addresses:
+            logger.error("Failed to get active addresses")
+            balance_data = None
         else:
-            # For timestamp-based collection, find corresponding layer block for balances
-            balance_data = self.collect_balance_data_for_timestamp(eth_timestamp)
+            # Always collect balances at the resolved layer height for consistency
+            balance_data = self.balance_collector.collect_balances_at_height(addresses, resolved_layer_height)
         
         # Save unified snapshot
         try:
@@ -671,7 +684,7 @@ class UnifiedDataCollector:
                 bridge_balance_trb=bridge_balance
             )
             
-            logger.info(f"Saved unified snapshot {snapshot_id} for ETH block {eth_block_number}")
+            logger.info(f"Saved unified snapshot {snapshot_id} for ETH block {eth_block_number} using Tellor Layer block {resolved_layer_height}")
             return True
             
         except Exception as e:
@@ -882,6 +895,170 @@ class UnifiedDataCollector:
             logger.error(f"Error cleaning up mismatched timestamps: {e}")
             return 0
 
+    def remove_data_by_layer_block(self, layer_block_height: int) -> bool:
+        """
+        Remove all data associated with a specific Tellor Layer block height.
+        
+        Args:
+            layer_block_height: Tellor Layer block height to remove data for
+            
+        Returns:
+            True if data was removed successfully, False otherwise
+        """
+        logger.info(f"Removing all data for Tellor Layer block height {layer_block_height}")
+        
+        try:
+            # Find all snapshots with this layer block height
+            snapshots = self.db.get_unified_snapshots()
+            snapshots_to_remove = [
+                s for s in snapshots 
+                if s.get('layer_block_height') == layer_block_height
+            ]
+            
+            if not snapshots_to_remove:
+                logger.info(f"No snapshots found for Tellor Layer block height {layer_block_height} - already clean")
+                return True
+            
+            logger.info(f"Found {len(snapshots_to_remove)} snapshots to remove for layer block {layer_block_height}")
+            
+            # Remove each snapshot and its associated data
+            removed_count = 0
+            for snapshot in snapshots_to_remove:
+                snapshot_id = snapshot.get('id')
+                eth_timestamp = snapshot.get('eth_block_timestamp')
+                
+                logger.info(f"Removing snapshot {snapshot_id} (ETH timestamp: {eth_timestamp})")
+                
+                # Remove the unified snapshot (this should cascade to remove balances)
+                if snapshot_id and self.db.delete_unified_snapshot(snapshot_id):
+                    removed_count += 1
+                else:
+                    logger.warning(f"Failed to remove snapshot {snapshot_id}")
+            
+            if removed_count > 0:
+                logger.info(f"Successfully removed {removed_count} snapshots for layer block {layer_block_height}")
+                return True
+            else:
+                logger.error(f"Failed to remove any snapshots for layer block {layer_block_height}")
+                return False
+                
+        except Exception as e:
+            logger.error(f"Error removing data for layer block {layer_block_height}: {e}")
+            return False
+
+    def rerun_collection_for_layer_block(self, layer_block_height: int) -> bool:
+        """
+        Re-collect all data for a specific Tellor Layer block height.
+        
+        Args:
+            layer_block_height: Tellor Layer block height to re-collect data for
+            
+        Returns:
+            True if collection was successful, False otherwise
+        """
+        logger.info(f"Re-collecting data for Tellor Layer block height {layer_block_height}")
+        
+        try:
+            # Get block info for the specified layer height
+            block_info = self.supply_collector.get_block_info(layer_block_height)
+            if not block_info:
+                logger.error(f"Could not get block info for layer height {layer_block_height}")
+                return False
+            
+            block_time_str, layer_timestamp = block_info
+            logger.info(f"Found layer block {layer_block_height} at timestamp {layer_timestamp} ({block_time_str})")
+            
+            # Find the corresponding Ethereum timestamp for this layer block
+            # We'll use the layer timestamp to find the closest Ethereum block
+            eth_block_number = self.find_ethereum_block_for_timestamp(layer_timestamp)
+            if eth_block_number is None:
+                logger.error(f"Could not find corresponding Ethereum block for layer timestamp {layer_timestamp}")
+                return False
+            
+            logger.info(f"Found corresponding Ethereum block {eth_block_number} for layer timestamp {layer_timestamp}")
+            
+            # Collect unified snapshot using the specific layer block height
+            success = self.collect_unified_snapshot(
+                eth_block_number=eth_block_number,
+                eth_timestamp=layer_timestamp,  # Use layer timestamp as the eth timestamp
+                layer_block_height=layer_block_height
+            )
+            
+            if success:
+                logger.info(f"Successfully re-collected data for layer block {layer_block_height}")
+                return True
+            else:
+                logger.error(f"Failed to re-collect data for layer block {layer_block_height}")
+                return False
+                
+        except Exception as e:
+            logger.error(f"Error re-collecting data for layer block {layer_block_height}: {e}")
+            return False
+
+    def remove_and_rerun_layer_block(self, layer_block_height: int) -> bool:
+        """
+        Remove existing data for a Tellor Layer block and re-collect it.
+        
+        Args:
+            layer_block_height: Tellor Layer block height to remove and re-collect
+            
+        Returns:
+            True if both removal and re-collection were successful, False otherwise
+        """
+        logger.info(f"Removing and re-running collection for Tellor Layer block {layer_block_height}")
+        
+        # First, remove existing data
+        if not self.remove_data_by_layer_block(layer_block_height):
+            logger.error(f"Failed to remove existing data for layer block {layer_block_height}")
+            return False
+        
+        # Wait a moment for database operations to complete
+        time.sleep(1)
+        
+        # Then, re-collect the data
+        if not self.rerun_collection_for_layer_block(layer_block_height):
+            logger.error(f"Failed to re-collect data for layer block {layer_block_height}")
+            return False
+        
+        logger.info(f"Successfully removed and re-collected data for layer block {layer_block_height}")
+        return True
+
+    def list_layer_blocks_in_database(self, limit: int = 100) -> List[Dict]:
+        """
+        List Tellor Layer blocks that have data in the database.
+        
+        Args:
+            limit: Maximum number of blocks to return
+            
+        Returns:
+            List of dictionaries with layer block information
+        """
+        try:
+            snapshots = self.db.get_unified_snapshots(limit=limit)
+            
+            layer_blocks = []
+            for snapshot in snapshots:
+                layer_height = snapshot.get('layer_block_height')
+                if layer_height:
+                    layer_blocks.append({
+                        'layer_block_height': layer_height,
+                        'layer_block_timestamp': snapshot.get('layer_block_timestamp'),
+                        'eth_block_number': snapshot.get('eth_block_number'),
+                        'eth_block_timestamp': snapshot.get('eth_block_timestamp'),
+                        'data_completeness_score': snapshot.get('data_completeness_score', 0),
+                        'snapshot_id': snapshot.get('id'),
+                        'collection_time': snapshot.get('collection_time')
+                    })
+            
+            # Sort by layer block height (descending)
+            layer_blocks.sort(key=lambda x: x['layer_block_height'], reverse=True)
+            
+            return layer_blocks
+            
+        except Exception as e:
+            logger.error(f"Error listing layer blocks in database: {e}")
+            return []
+
 
 def main():
     """Main function for running unified data collection."""
@@ -906,6 +1083,11 @@ def main():
     parser.add_argument('--summary', action='store_true', help='Show data collection summary')
     parser.add_argument('--cleanup', action='store_true', help='Clean up snapshots with mismatched timestamps')
     parser.add_argument('--max-time-diff', type=int, default=5, help='Maximum allowed time difference in minutes for cleanup')
+    parser.add_argument('--remove-layer-block', type=int, help='Remove data for specific Tellor Layer block height')
+    parser.add_argument('--rerun-layer-block', type=int, help='Re-collect data for specific Tellor Layer block height')
+    parser.add_argument('--remove-and-rerun', type=int, help='Remove and re-collect data for specific Tellor Layer block height')
+    parser.add_argument('--list-layer-blocks', action='store_true', help='List Tellor Layer blocks in database')
+    parser.add_argument('--list-limit', type=int, default=50, help='Limit for listing layer blocks')
     parser.add_argument('--db-path', default='tellor_balances.db', help='Database file path')
     
     args = parser.parse_args()
@@ -924,6 +1106,50 @@ def main():
             print("\n=== UNIFIED DATA COLLECTION SUMMARY ===")
             for key, value in summary.items():
                 print(f"{key}: {value}")
+            return
+        
+        if args.list_layer_blocks:
+            logger.info("Listing Tellor Layer blocks in database")
+            layer_blocks = collector.list_layer_blocks_in_database(limit=args.list_limit)
+            if layer_blocks:
+                print(f"\n=== TELLOR LAYER BLOCKS IN DATABASE (latest {len(layer_blocks)}) ===")
+                print(f"{'Layer Height':<15} {'Layer Timestamp':<12} {'ETH Block':<12} {'ETH Timestamp':<12} {'Completeness':<12} {'Collection Time'}")
+                print("-" * 100)
+                for block in layer_blocks:
+                    layer_dt = datetime.fromtimestamp(block['layer_block_timestamp']) if block['layer_block_timestamp'] else "N/A"
+                    eth_dt = datetime.fromtimestamp(block['eth_block_timestamp']) if block['eth_block_timestamp'] else "N/A"
+                    print(f"{block['layer_block_height']:<15} {block['layer_block_timestamp']:<12} "
+                          f"{block['eth_block_number']:<12} {block['eth_block_timestamp']:<12} "
+                          f"{block['data_completeness_score']:<12.2f} {block['collection_time'] or 'N/A'}")
+            else:
+                print("No Tellor Layer blocks found in database")
+            return
+        
+        if args.remove_layer_block:
+            logger.info(f"Removing data for Tellor Layer block {args.remove_layer_block}")
+            success = collector.remove_data_by_layer_block(args.remove_layer_block)
+            if success:
+                logger.info(f"Successfully removed data for layer block {args.remove_layer_block}")
+            else:
+                logger.error(f"Failed to remove data for layer block {args.remove_layer_block}")
+            return
+        
+        if args.rerun_layer_block:
+            logger.info(f"Re-running collection for Tellor Layer block {args.rerun_layer_block}")
+            success = collector.rerun_collection_for_layer_block(args.rerun_layer_block)
+            if success:
+                logger.info(f"Successfully re-collected data for layer block {args.rerun_layer_block}")
+            else:
+                logger.error(f"Failed to re-collect data for layer block {args.rerun_layer_block}")
+            return
+        
+        if args.remove_and_rerun:
+            logger.info(f"Removing and re-running collection for Tellor Layer block {args.remove_and_rerun}")
+            success = collector.remove_and_rerun_layer_block(args.remove_and_rerun)
+            if success:
+                logger.info(f"Successfully removed and re-collected data for layer block {args.remove_and_rerun}")
+            else:
+                logger.error(f"Failed to remove and re-collect data for layer block {args.remove_and_rerun}")
             return
         
         if args.cleanup:

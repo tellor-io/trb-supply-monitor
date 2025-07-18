@@ -2,7 +2,7 @@
 
 class HistoricalDashboard {
     constructor() {
-        this.apiBase = '';
+        this.apiBase = window.ROOT_PATH || '';
         this.currentPage = 0;
         this.currentLimit = 100;
         this.currentSearch = '';
@@ -94,16 +94,16 @@ class HistoricalDashboard {
             const datetime = new Date(timestamp * 1000);
             
             return `
-                <tr title="ETH Block: ${snapshot.eth_block_number || 'N/A'}">
+                <tr title="ETH Block: ${snapshot.eth_block_number || 'N/A'}" data-timestamp="${timestamp}" id="row-${timestamp}">
                     <td class="font-mono text-xs">
                         ${datetime.toLocaleString()}
                         <br><small class="text-muted">${datetime.toISOString().slice(0, 19)}Z</small>
                     </td>
                     <td class="font-mono text-xs">
-                        ${this.formatNumber(snapshot.eth_block_number) || 'N/A'}
+                        ${this.formatNumber(snapshot.eth_block_number, 0, false) || 'N/A'}
                     </td>
                     <td class="font-mono text-xs">
-                        ${this.formatNumber(snapshot.layer_block_height) || 'N/A'}
+                        ${this.formatNumber(snapshot.layer_block_height, 0, false) || 'N/A'}
                     </td>
                     <td class="font-mono text-primary">
                         ${this.formatTRB(snapshot.bridge_balance_trb)}
@@ -179,8 +179,8 @@ class HistoricalDashboard {
     
     changeTimeRange(hours) {
         this.currentTimeRange = parseInt(hours);
-        document.querySelector('#historicalSection h1').textContent = 
-            `Historical Supply Data - Last ${hours == 168 ? '7 days' : hours + ' hours'}`;
+        document.querySelector('#historicalSection h2').textContent = 
+            `TRB Supply Data - Last ${hours == 168 ? '7 days' : hours + ' hours'}`;
         this.loadHistoricalData();
     }
     
@@ -271,7 +271,7 @@ class HistoricalDashboard {
                     <i class="fas fa-cube"></i>
                 </div>
                 <div class="stat-content">
-                    <div class="stat-number">${this.formatNumber(data.layer_block_height)}</div>
+                    <div class="stat-number">${this.formatNumber(data.layer_block_height, 0, false)}</div>
                     <div class="stat-title">Block Height</div>
                     <div class="stat-subtitle">Height of Data Shown</div>
                 </div>
@@ -354,8 +354,11 @@ class HistoricalDashboard {
     }
     
     // Utility functions
-    formatNumber(num, decimals = 0) {
+    formatNumber(num, decimals = 0, useCommas = true) {
         if (num === null || num === undefined) return '0';
+        if (!useCommas) {
+            return Number(num).toFixed(decimals);
+        }
         return Number(num).toLocaleString('en-US', { 
             minimumFractionDigits: decimals,
             maximumFractionDigits: decimals 
@@ -428,11 +431,19 @@ class HistoricalDashboard {
     
     updateCharts(data) {
         if (!data.timeline || data.timeline.length === 0) {
-            this.showNoDataState();
+            // If no data, destroy existing charts
+            Object.values(this.charts).forEach(chart => {
+                if (chart) chart.destroy();
+            });
+            this.charts = {
+                supply: null,
+                bridge: null,
+                balance: null
+            };
             return;
         }
-        
-        this.hideNoDataState();
+
+        // Create or update charts
         this.createCharts(data.timeline);
     }
     
@@ -447,6 +458,9 @@ class HistoricalDashboard {
         if (this.charts.supply) {
             this.charts.supply.destroy();
         }
+        
+        const supplyOptions = this.getChartOptions('TRB Supply Overview', 'TRB Amount');
+        console.log('Supply chart options:', supplyOptions);
         
         this.charts.supply = new Chart(document.getElementById('supplyChart').getContext('2d'), {
             type: 'line',
@@ -485,7 +499,7 @@ class HistoricalDashboard {
                     }
                 ]
             },
-            options: this.getChartOptions('TRB Supply Overview', 'TRB Amount')
+            options: supplyOptions
         });
         
         // Bridge & Staking Chart
@@ -596,6 +610,53 @@ class HistoricalDashboard {
                 }
             }
         });
+        
+        // Add fallback click listeners to canvas elements
+        this.addFallbackClickListeners();
+    }
+
+    addFallbackClickListeners() {
+        console.log('Adding fallback click listeners to chart canvases');
+        
+        const chartCanvases = ['supplyChart', 'bridgeChart', 'balanceChart'];
+        
+        chartCanvases.forEach(chartId => {
+            const canvas = document.getElementById(chartId);
+            if (canvas) {
+                // Remove existing click listeners
+                canvas.removeEventListener('click', this.handleCanvasClick);
+                
+                // Add new click listener
+                canvas.addEventListener('click', (event) => this.handleCanvasClick(event, chartId));
+                console.log(`Added fallback click listener to ${chartId}`);
+            }
+        });
+    }
+
+    handleCanvasClick(event, chartId) {
+        console.log(`Canvas clicked: ${chartId}`, event);
+        
+        // Get the chart instance
+        const chartInstance = this.charts[chartId.replace('Chart', '')];
+        if (!chartInstance) {
+            console.warn(`No chart instance found for ${chartId}`);
+            return;
+        }
+        
+        // Get the elements at the click position
+        const rect = event.target.getBoundingClientRect();
+        const x = event.clientX - rect.left;
+        const y = event.clientY - rect.top;
+        
+        const elements = chartInstance.getElementsAtEventForMode(event, 'nearest', { intersect: false }, false);
+        console.log('Fallback click elements:', elements);
+        
+        if (elements.length > 0) {
+            const index = elements[0].index;
+            const timestamp = Math.floor(chartInstance.data.labels[index].getTime() / 1000);
+            console.log('Fallback click timestamp:', timestamp);
+            this.scrollToTableRow(timestamp);
+        }
     }
     
     getChartOptions(title, yAxisLabel) {
@@ -605,6 +666,29 @@ class HistoricalDashboard {
             interaction: {
                 mode: 'index',
                 intersect: false,
+            },
+            onClick: (event, elements) => {
+                console.log('Chart clicked!', elements);
+                if (elements.length > 0) {
+                    const datasetIndex = elements[0].datasetIndex;
+                    const index = elements[0].index;
+                    const chart = elements[0].chart;
+                    
+                    console.log('Click details:', { datasetIndex, index, chart });
+                    
+                    // Get the timestamp from the chart data
+                    const timestamp = Math.floor(chart.data.labels[index].getTime() / 1000);
+                    console.log('Calculated timestamp:', timestamp);
+                    
+                    // Get the dashboard instance from the global scope
+                    if (window.dashboard && window.dashboard.scrollToTableRow) {
+                        window.dashboard.scrollToTableRow(timestamp);
+                    } else {
+                        console.error('Dashboard instance not found');
+                    }
+                } else {
+                    console.log('No chart elements found in click');
+                }
             },
             plugins: {
                 title: {
@@ -641,6 +725,9 @@ class HistoricalDashboard {
                             } else {
                                 return `${label}: ${value.toLocaleString()}`;
                             }
+                        },
+                        afterBody: function(context) {
+                            return ['', '💡 Click to view details in table below'];
                         }
                     }
                 }
@@ -693,27 +780,81 @@ class HistoricalDashboard {
             }
         };
     }
-    
-    showNoDataState() {
-        // Hide all individual chart containers when no data is available
-        document.getElementById('supplyChartContainer').classList.add('hidden');
-        document.getElementById('bridgeChartContainer').classList.add('hidden');
-        document.getElementById('balanceChartContainer').classList.add('hidden');
-        document.getElementById('chartNoData').classList.remove('hidden');
+
+    scrollToTableRow(timestamp) {
+        console.log(`scrollToTableRow called with timestamp: ${timestamp}`);
+        
+        // Find the table row with the matching timestamp
+        const targetRow = document.getElementById(`row-${timestamp}`);
+        console.log(`Found target row:`, targetRow);
+        
+        if (targetRow) {
+            // Remove any existing highlights
+            document.querySelectorAll('.chart-clicked-row').forEach(row => {
+                row.classList.remove('chart-clicked-row');
+            });
+            
+            // Highlight the target row
+            targetRow.classList.add('chart-clicked-row');
+            console.log('Added highlight class to row');
+            
+            // Scroll to the row with smooth behavior
+            targetRow.scrollIntoView({ 
+                behavior: 'smooth', 
+                block: 'center',
+                inline: 'nearest'
+            });
+            
+            // Remove highlight after 3 seconds
+            setTimeout(() => {
+                targetRow.classList.remove('chart-clicked-row');
+                console.log('Removed highlight class from row');
+            }, 3000);
+            
+            console.log(`✅ Scrolled to row for timestamp: ${timestamp}`);
+        } else {
+            console.warn(`❌ Could not find table row for timestamp: ${timestamp}`);
+            
+            // Debug: List all available row IDs
+            const allRows = document.querySelectorAll('[id^="row-"]');
+            console.log('Available row IDs:', Array.from(allRows).map(row => row.id));
+        }
     }
-    
-    hideNoDataState() {
-        // Show all chart containers when data is available
-        document.getElementById('supplyChartContainer').classList.remove('hidden');
-        document.getElementById('bridgeChartContainer').classList.remove('hidden');
-        document.getElementById('balanceChartContainer').classList.remove('hidden');
-        document.getElementById('chartNoData').classList.add('hidden');
+
+    // Test function for debugging chart clicks
+    testChartClick(timestamp) {
+        console.log('🧪 Testing chart click functionality...');
+        
+        if (!timestamp) {
+            // Use the first available timestamp from the table
+            const firstRow = document.querySelector('[id^="row-"]');
+            if (firstRow) {
+                timestamp = firstRow.id.replace('row-', '');
+                console.log(`Using first available timestamp: ${timestamp}`);
+            } else {
+                console.error('No table rows found to test with');
+                return;
+            }
+        }
+        
+        this.scrollToTableRow(parseInt(timestamp));
     }
 }
 
 // Initialize the dashboard when page loads
 document.addEventListener('DOMContentLoaded', () => {
     window.dashboard = new HistoricalDashboard();
+    
+    // Add test function to global scope for debugging
+    window.testChartClick = (timestamp) => {
+        if (window.dashboard) {
+            window.dashboard.testChartClick(timestamp);
+        } else {
+            console.error('Dashboard not initialized');
+        }
+    };
+    
+    console.log('🎯 Chart click debugging enabled. Try: testChartClick() in console');
 });
 
 // Make dashboard available globally for debugging
