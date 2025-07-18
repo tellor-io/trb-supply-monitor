@@ -25,7 +25,7 @@ except ImportError:
 load_dotenv()
 
 # Configuration
-TELLOR_LAYER_RPC_URL = os.getenv('TELLOR_LAYER_RPC_URL', 'https://node-palmito.tellorlayer.com/rpc/')
+TELLOR_LAYER_RPC_URL = os.getenv('TELLOR_LAYER_RPC_URL')
 
 # Configure logging
 logger = logging.getLogger(__name__)

@@ -38,8 +38,8 @@ try:
     from .supply_collector import LAYER_GRPC_URL, logger, TELLOR_LAYER_RPC_URL
 except ImportError:
     # Fallback configuration if import fails
-    LAYER_GRPC_URL = os.getenv('LAYER_GRPC_URL', 'http://node-palmito.tellorlayer.com')
-    TELLOR_LAYER_RPC_URL = os.getenv('TELLOR_LAYER_RPC_URL', 'https://node-palmito.tellorlayer.com/rpc/')
+    LAYER_GRPC_URL = os.getenv('LAYER_GRPC_URL')
+    TELLOR_LAYER_RPC_URL = os.getenv('TELLOR_LAYER_RPC_URL')
     
     # Configure logging
     logging.basicConfig(
@@ -47,6 +47,24 @@ except ImportError:
         format='%(asctime)s - %(levelname)s - %(message)s'
     )
     logger = logging.getLogger(__name__)
+
+# Ensure LAYER_GRPC_URL is not None and properly configured
+if not LAYER_GRPC_URL:
+    LAYER_GRPC_URL = os.getenv('LAYER_GRPC_URL')
+    logger.warning(f"LAYER_GRPC_URL was None, using fallback: {LAYER_GRPC_URL}")
+
+if not TELLOR_LAYER_RPC_URL:
+    TELLOR_LAYER_RPC_URL = os.getenv('TELLOR_LAYER_RPC_URL')
+    logger.warning(f"TELLOR_LAYER_RPC_URL was None, using fallback: {TELLOR_LAYER_RPC_URL}")
+
+# Validate URLs
+if not LAYER_GRPC_URL.startswith(('http://', 'https://')):
+    raise ValueError(f"Invalid LAYER_GRPC_URL: {LAYER_GRPC_URL}")
+if not TELLOR_LAYER_RPC_URL.startswith(('http://', 'https://')):
+    raise ValueError(f"Invalid TELLOR_LAYER_RPC_URL: {TELLOR_LAYER_RPC_URL}")
+
+logger.info(f"Using Tellor Layer GRPC URL: {LAYER_GRPC_URL}")
+logger.info(f"Using Tellor Layer RPC URL: {TELLOR_LAYER_RPC_URL}")
 
 # Configuration
 CSV_FILE = 'active_addresses.csv'
@@ -85,8 +103,8 @@ class EnhancedActiveBalancesCollector:
         self.csv_file = CSV_FILE
         self.use_csv = use_csv
         self.base_url = LAYER_GRPC_URL.rstrip('/')
-        self.accounts_endpoint = f"{self.base_url}:1317/cosmos/auth/v1beta1/accounts"
-        self.balance_endpoint_template = f"{self.base_url}:1317/cosmos/bank/v1beta1/balances/{{}}"
+        self.accounts_endpoint = f"{self.base_url}/cosmos/auth/v1beta1/accounts"
+        self.balance_endpoint_template = f"{self.base_url}/cosmos/bank/v1beta1/balances/{{}}"
         self.session = requests.Session()
         self.layerd_path = './layerd'
         
@@ -354,7 +372,7 @@ class EnhancedActiveBalancesCollector:
             
             result = self.run_layerd_command(cmd_args)
             if not result:
-                logger.warning(f"Failed to get balance for {address} at height {height}")
+                logger.debug(f"No balance data for {address} at height {height} (address likely didn't exist yet)")
                 return 0, 0.0
             
             balances = result.get('balances', [])
@@ -372,7 +390,7 @@ class EnhancedActiveBalancesCollector:
             return loya_balance, loya_balance_trb
             
         except Exception as e:
-            logger.warning(f"Error fetching balance for {address} at height {height}: {e}")
+            logger.debug(f"Error fetching balance for {address} at height {height}: {e}")
             return 0, 0.0
     
     def run_layerd_command(self, cmd_args: List[str]) -> Optional[Dict]:
@@ -390,14 +408,20 @@ class EnhancedActiveBalancesCollector:
             
             if result.returncode != 0:
                 error_msg = result.stderr.strip()
-                logger.error(f"Command failed: {error_msg}")
-                return None
+                if "rpc error: code = InvalidArgument" in error_msg:
+                    # This is expected when querying addresses that didn't exist at historical heights
+                    logger.debug(f"RPC InvalidArgument error (address likely didn't exist at this height): {error_msg}")
+                    return None
+                else:
+                    logger.error(f"Command failed: {error_msg}")
+                    return None
             
             # Parse JSON output
             try:
                 return json.loads(result.stdout)
             except json.JSONDecodeError as e:
                 logger.error(f"Failed to parse JSON output: {e}")
+                logger.debug(f"Raw output: {result.stdout}")
                 return None
                 
         except subprocess.TimeoutExpired:

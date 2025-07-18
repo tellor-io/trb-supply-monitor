@@ -16,6 +16,7 @@ Design Goals:
 import os
 import logging
 import time
+import sys
 from datetime import datetime, timezone, timedelta
 from typing import Dict, List, Optional, Tuple, Set
 from pathlib import Path
@@ -37,6 +38,15 @@ except (ImportError, ModuleNotFoundError):
     from src.tellor_supply_analytics.find_layer_block import TellorLayerBlockFinder, find_layer_block_for_eth_timestamp
 
 logger = logging.getLogger(__name__)
+
+# Import shutdown flag from run_unified_collection
+try:
+    from run_unified_collection import shutdown_requested, check_shutdown
+except ImportError:
+    # Fallback if running standalone
+    shutdown_requested = False
+    def check_shutdown():
+        pass
 
 # Configuration
 ETHEREUM_RPC_URL = os.getenv('ETHEREUM_RPC_URL', 'https://rpc.sepolia.org')
@@ -210,6 +220,21 @@ class UnifiedDataCollector:
             current_block_number = int(current_block.get('number', 0))
             current_timestamp = int(current_block.get('timestamp', 0))
             
+            # Get the latest block from our database to compare timestamps
+            latest_db_snapshots = self.db.get_unified_snapshots(limit=1)
+            if latest_db_snapshots:
+                latest_db_timestamp = latest_db_snapshots[0].get('eth_block_timestamp', 0)
+                
+                # If the "current" block from RPC is older than our latest DB entry,
+                # we're likely connected to an archive node with old data
+                if current_timestamp < latest_db_timestamp:
+                    logger.warning(
+                        f"Current RPC block timestamp ({current_timestamp}) is older than latest DB "
+                        f"timestamp ({latest_db_timestamp}). This appears to be an archive node "
+                        "with historical data. Skipping collection to prevent data inconsistency."
+                    )
+                    return []
+            
             # Calculate target timestamp range
             target_start_timestamp = current_timestamp - (hours_back * 3600)
             
@@ -249,6 +274,9 @@ class UnifiedDataCollector:
                 except Exception as e:
                     logger.warning(f"Error getting block {block_number}: {e}")
                     continue
+            
+            # Sort blocks by timestamp to ensure chronological order
+            blocks_to_check.sort(key=lambda x: x[1])
             
             logger.info(f"Found {len(blocks_to_check)} Ethereum blocks to process")
             return blocks_to_check
@@ -393,19 +421,8 @@ class UnifiedDataCollector:
         Returns:
             Dictionary containing layer data, or None if not found
         """
-        # Try to collect current layer data that's close to the Ethereum timestamp
-        target_time = datetime.fromtimestamp(eth_timestamp, tz=timezone.utc)
-        current_time = datetime.now(timezone.utc)
-        
-        # If the Ethereum timestamp is recent (within tolerance), get current layer data
-        time_diff = abs((current_time - target_time).total_seconds())
-        if time_diff <= tolerance_hours * 3600:
-            logger.info(f"ETH timestamp {eth_timestamp} is recent, collecting current layer data")
-            return self.supply_collector.collect_current_data()
-        
-        # For historical data, use the new block finder to get corresponding Tellor Layer data
-        logger.info(f"ETH timestamp {eth_timestamp} is historical ({target_time}), "
-                   f"finding corresponding Tellor Layer block...")
+        # For historical data, use the block finder to get corresponding Tellor Layer data
+        logger.info(f"Finding corresponding Tellor Layer block for ETH timestamp {eth_timestamp}...")
         
         try:
             # Find the corresponding Tellor Layer block for this Ethereum timestamp
@@ -415,6 +432,14 @@ class UnifiedDataCollector:
                 return None
             
             layer_height, layer_time, layer_timestamp = layer_block_info
+            
+            # Verify that the timestamps are within tolerance
+            time_diff_minutes = abs(eth_timestamp - layer_timestamp) / 60
+            if time_diff_minutes > tolerance_hours * 60:
+                logger.warning(f"Found Tellor Layer block {layer_height} but timestamps differ by {time_diff_minutes:.2f} minutes "
+                             f"(max allowed: {tolerance_hours * 60} minutes)")
+                return None
+            
             logger.info(f"Found Tellor Layer block {layer_height} at {layer_time} for ETH timestamp {eth_timestamp}")
             
             # Now collect historical layer data at that specific block height
@@ -562,19 +587,22 @@ class UnifiedDataCollector:
     
 
     
-    def collect_unified_snapshot(self, eth_block_number: int, eth_timestamp: int) -> bool:
+    def collect_unified_snapshot(self, eth_block_number: int, eth_timestamp: int, layer_block_height: Optional[int] = None) -> bool:
         """
         Collect a complete unified snapshot for a specific Ethereum block.
         
         Args:
             eth_block_number: Ethereum block number
             eth_timestamp: Ethereum block timestamp
+            layer_block_height: Optional specific Tellor Layer block height to use
             
         Returns:
             True if collection was successful, False otherwise
         """
         logger.info(f"Collecting unified snapshot for ETH block {eth_block_number} "
                    f"(timestamp {eth_timestamp})")
+        if layer_block_height:
+            logger.info(f"Using specified Tellor Layer block height: {layer_block_height}")
         
         # Check if we already have complete data for this timestamp
         existing_snapshot = self.db.get_unified_snapshot_by_eth_timestamp(eth_timestamp)
@@ -582,12 +610,18 @@ class UnifiedDataCollector:
             logger.info(f"Complete data already exists for ETH timestamp {eth_timestamp}")
             return True
         
+        # Find the corresponding Ethereum block number if not provided
+        if eth_block_number <= 0:
+            found_block = self.find_ethereum_block_for_timestamp(eth_timestamp)
+            if found_block is None:
+                logger.error(f"Could not find Ethereum block for timestamp {eth_timestamp}")
+                return False
+            eth_block_number = found_block
+        
         # Collect bridge data
         logger.info("Collecting bridge balance data...")
-        if eth_block_number > 0:
-            # For real-time data, get bridge balance from Ethereum contract
-            bridge_balance = self.collect_bridge_data_for_block(eth_block_number, eth_timestamp)
-        else:
+        bridge_balance = self.collect_bridge_data_for_block(eth_block_number, eth_timestamp)
+        if bridge_balance is None:
             # For historical data, calculate bridge balance from CSV files
             bridge_balance = self.calculate_historical_bridge_balance(eth_timestamp)
             if bridge_balance is None:
@@ -596,11 +630,36 @@ class UnifiedDataCollector:
         
         # Collect layer supply data
         logger.info("Collecting layer supply data...")
-        supply_data = self.find_corresponding_layer_data(eth_timestamp)
+        if layer_block_height is not None:
+            # Use the specific layer block height provided by the user
+            logger.info(f"Using user-specified Tellor Layer block height: {layer_block_height}")
+            supply_data = self.collect_historical_layer_data(layer_block_height, eth_timestamp, eth_timestamp)
+        else:
+            # Find corresponding layer data using timestamp lookup
+            supply_data = self.find_corresponding_layer_data(eth_timestamp)
+            
+            # If we couldn't find corresponding layer data, skip this snapshot
+            if supply_data is None:
+                logger.error("Could not find corresponding Tellor Layer data, skipping snapshot")
+                return False
         
         # Collect balance data
         logger.info("Collecting balance data...")
-        balance_data = self.collect_balance_data_for_timestamp(eth_timestamp)
+        if layer_block_height is not None:
+            # For specific layer block height, collect balances at that height
+            logger.info(f"Collecting balance data at Tellor Layer block height: {layer_block_height}")
+            
+            # Get active addresses first
+            addresses = self.balance_collector.get_all_addresses()
+            if not addresses:
+                logger.error("Failed to get active addresses")
+                balance_data = None
+            else:
+                # Collect balances at the specific height
+                balance_data = self.balance_collector.collect_balances_at_height(addresses, layer_block_height)
+        else:
+            # For timestamp-based collection, find corresponding layer block for balances
+            balance_data = self.collect_balance_data_for_timestamp(eth_timestamp)
         
         # Save unified snapshot
         try:
@@ -650,26 +709,38 @@ class UnifiedDataCollector:
         
         successful_collections = 0
         
-        for i, (block_number, block_timestamp) in enumerate(blocks_to_process, 1):
-            logger.info(f"Processing block {i}/{len(blocks_to_process)}: "
-                       f"ETH block {block_number} (timestamp {block_timestamp})")
-            
-            try:
-                if self.collect_unified_snapshot(block_number, block_timestamp):
-                    successful_collections += 1
-                else:
-                    logger.warning(f"Failed to collect data for ETH block {block_number}")
-                
-                # Add delay between collections to avoid overwhelming RPCs
-                if i < len(blocks_to_process):
-                    time.sleep(2)
+        try:
+            for i, (block_number, block_timestamp) in enumerate(blocks_to_process, 1):
+                # Check for shutdown request
+                if shutdown_requested:
+                    logger.info("Shutdown requested, stopping collection...")
+                    break
                     
-            except Exception as e:
-                logger.error(f"Error processing ETH block {block_number}: {e}")
-                continue
-        
-        logger.info(f"Unified collection completed: {successful_collections}/{len(blocks_to_process)} blocks processed")
-        return successful_collections
+                logger.info(f"Processing block {i}/{len(blocks_to_process)}: "
+                           f"ETH block {block_number} (timestamp {block_timestamp})")
+                
+                try:
+                    if self.collect_unified_snapshot(block_number, block_timestamp):
+                        successful_collections += 1
+                    else:
+                        logger.warning(f"Failed to collect data for ETH block {block_number}")
+                    
+                    # Add delay between collections to avoid overwhelming RPCs
+                    if i < len(blocks_to_process) and not shutdown_requested:
+                        time.sleep(2)
+                        
+                except Exception as e:
+                    logger.error(f"Error processing ETH block {block_number}: {e}")
+                    continue
+                    
+        except KeyboardInterrupt:
+            logger.info("\nCollection interrupted by user. Saving progress...")
+        except Exception as e:
+            logger.error(f"Error in unified collection: {e}")
+        finally:
+            if successful_collections > 0:
+                logger.info(f"Successfully collected data for {successful_collections} blocks")
+            return successful_collections
     
     def backfill_incomplete_data(self, max_backfill: int = 20) -> int:
         """
@@ -699,25 +770,37 @@ class UnifiedDataCollector:
         
         updated_count = 0
         
-        for snapshot in incomplete_snapshots:
-            eth_block_number = snapshot.get('eth_block_number', 0)
-            eth_timestamp = snapshot.get('eth_block_timestamp', 0)
-            current_score = snapshot.get('data_completeness_score', 0)
-            
-            logger.info(f"Backfilling data for ETH block {eth_block_number} "
-                       f"(current completeness: {current_score:.2f})")
-            
-            try:
-                # Attempt to collect missing data
-                if self.collect_unified_snapshot(eth_block_number, eth_timestamp):
-                    updated_count += 1
+        try:
+            for snapshot in incomplete_snapshots:
+                # Check for shutdown request
+                if shutdown_requested:
+                    logger.info("Shutdown requested, stopping backfill...")
+                    break
                     
-            except Exception as e:
-                logger.error(f"Error backfilling ETH block {eth_block_number}: {e}")
-                continue
-        
-        logger.info(f"Backfill completed: {updated_count}/{len(incomplete_snapshots)} snapshots updated")
-        return updated_count
+                eth_block_number = snapshot.get('eth_block_number', 0)
+                eth_timestamp = snapshot.get('eth_block_timestamp', 0)
+                current_score = snapshot.get('data_completeness_score', 0)
+                
+                logger.info(f"Backfilling data for ETH block {eth_block_number} "
+                           f"(current completeness: {current_score:.2f})")
+                
+                try:
+                    # Attempt to collect missing data
+                    if self.collect_unified_snapshot(eth_block_number, eth_timestamp):
+                        updated_count += 1
+                        
+                except Exception as e:
+                    logger.error(f"Error backfilling ETH block {eth_block_number}: {e}")
+                    continue
+                    
+        except KeyboardInterrupt:
+            logger.info("\nBackfill interrupted by user. Saving progress...")
+        except Exception as e:
+            logger.error(f"Error in backfill: {e}")
+        finally:
+            if updated_count > 0:
+                logger.info(f"Successfully updated {updated_count} snapshots")
+            return updated_count
     
     def get_data_summary(self) -> Dict:
         """Get a summary of unified data collection status."""
@@ -748,10 +831,72 @@ class UnifiedDataCollector:
             logger.error(f"Error getting data summary: {e}")
             return {"error": str(e)}
 
+    def cleanup_mismatched_timestamps(self, max_time_diff_minutes: int = 5) -> int:
+        """
+        Remove unified snapshots where Ethereum and Tellor Layer timestamps are too far apart.
+        
+        Args:
+            max_time_diff_minutes: Maximum allowed difference between timestamps in minutes
+            
+        Returns:
+            Number of rows removed
+        """
+        logger.info(f"Cleaning up snapshots with mismatched timestamps (max diff: {max_time_diff_minutes} minutes)")
+        
+        try:
+            # Get all snapshots
+            snapshots = self.db.get_unified_snapshots()
+            if not snapshots:
+                logger.info("No snapshots found to clean up")
+                return 0
+            
+            rows_to_remove = []
+            for snapshot in snapshots:
+                eth_timestamp = snapshot.get('eth_block_timestamp', 0)
+                layer_timestamp = snapshot.get('layer_block_timestamp', 0)
+                
+                # Skip if either timestamp is missing
+                if not eth_timestamp or not layer_timestamp:
+                    continue
+                
+                # Calculate time difference in minutes
+                time_diff_minutes = abs(eth_timestamp - layer_timestamp) / 60
+                
+                if time_diff_minutes > max_time_diff_minutes:
+                    logger.info(f"Found mismatched snapshot: ETH timestamp={eth_timestamp}, "
+                              f"Layer timestamp={layer_timestamp}, diff={time_diff_minutes:.2f} minutes")
+                    rows_to_remove.append(snapshot['id'])
+            
+            if not rows_to_remove:
+                logger.info("No mismatched snapshots found")
+                return 0
+            
+            # Remove the mismatched snapshots
+            for snapshot_id in rows_to_remove:
+                self.db.delete_unified_snapshot(snapshot_id)
+            
+            logger.info(f"Removed {len(rows_to_remove)} snapshots with mismatched timestamps")
+            return len(rows_to_remove)
+            
+        except Exception as e:
+            logger.error(f"Error cleaning up mismatched timestamps: {e}")
+            return 0
+
 
 def main():
     """Main function for running unified data collection."""
     import argparse
+    import signal
+    import sys
+    
+    def signal_handler(signum, frame):
+        """Handle interrupt signals gracefully."""
+        logger.info("\nReceived interrupt signal. Shutting down gracefully...")
+        sys.exit(0)
+    
+    # Register signal handlers
+    signal.signal(signal.SIGINT, signal_handler)   # Ctrl+C
+    signal.signal(signal.SIGTERM, signal_handler)  # Termination request
     
     parser = argparse.ArgumentParser(description='Unified Tellor Data Collector')
     parser.add_argument('--hours-back', type=int, default=24, help='Hours back to collect data for')
@@ -759,6 +904,8 @@ def main():
     parser.add_argument('--max-blocks', type=int, default=50, help='Maximum blocks to process in one run')
     parser.add_argument('--backfill', action='store_true', help='Run backfill for incomplete data')
     parser.add_argument('--summary', action='store_true', help='Show data collection summary')
+    parser.add_argument('--cleanup', action='store_true', help='Clean up snapshots with mismatched timestamps')
+    parser.add_argument('--max-time-diff', type=int, default=5, help='Maximum allowed time difference in minutes for cleanup')
     parser.add_argument('--db-path', default='tellor_balances.db', help='Database file path')
     
     args = parser.parse_args()
@@ -769,27 +916,41 @@ def main():
         format='%(asctime)s - %(levelname)s - %(message)s'
     )
     
-    collector = UnifiedDataCollector(db_path=args.db_path)
-    
-    if args.summary:
-        summary = collector.get_data_summary()
-        print("\n=== UNIFIED DATA COLLECTION SUMMARY ===")
-        for key, value in summary.items():
-            print(f"{key}: {value}")
-        return
-    
-    if args.backfill:
-        logger.info("Running backfill mode")
-        updated = collector.backfill_incomplete_data()
-        logger.info(f"Backfill completed: {updated} snapshots updated")
-    else:
-        logger.info("Running unified collection")
-        processed = collector.run_unified_collection(
-            hours_back=args.hours_back,
-            block_interval=args.block_interval,
-            max_blocks=args.max_blocks
-        )
-        logger.info(f"Collection completed: {processed} blocks processed")
+    try:
+        collector = UnifiedDataCollector(db_path=args.db_path)
+        
+        if args.summary:
+            summary = collector.get_data_summary()
+            print("\n=== UNIFIED DATA COLLECTION SUMMARY ===")
+            for key, value in summary.items():
+                print(f"{key}: {value}")
+            return
+        
+        if args.cleanup:
+            logger.info("Running cleanup mode")
+            removed = collector.cleanup_mismatched_timestamps(max_time_diff_minutes=args.max_time_diff)
+            logger.info(f"Cleanup completed: {removed} snapshots removed")
+            return
+            
+        if args.backfill:
+            logger.info("Running backfill mode")
+            updated = collector.backfill_incomplete_data()
+            logger.info(f"Backfill completed: {updated} snapshots updated")
+        else:
+            logger.info("Running unified collection")
+            processed = collector.run_unified_collection(
+                hours_back=args.hours_back,
+                block_interval=args.block_interval,
+                max_blocks=args.max_blocks
+            )
+            logger.info(f"Collection completed: {processed} blocks processed")
+            
+    except KeyboardInterrupt:
+        logger.info("\nReceived keyboard interrupt. Shutting down gracefully...")
+        sys.exit(0)
+    except Exception as e:
+        logger.error(f"Unexpected error: {e}")
+        sys.exit(1)
 
 
 if __name__ == '__main__':

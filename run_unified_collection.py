@@ -11,8 +11,13 @@ Features:
 - Bridge activity-based collection using transaction CSV files
 - Data completeness tracking and incremental updates
 - Monitoring mode for continuous operation
+- Specific block height collection for targeted data snapshots
 
 Usage Examples:
+    # First activate the virtual environment:
+    source .venv/bin/activate
+
+    # Then run the collector:
     # Collect last 24 hours of data
     python run_unified_collection.py --hours-back 24
 
@@ -21,6 +26,12 @@ Usage Examples:
 
     # Collect data at bridge activity block heights
     python run_unified_collection.py --bridge-historic
+
+    # Collect data at specific Ethereum block height
+    python run_unified_collection.py --eth-block 20123456
+
+    # Collect data at specific Tellor Layer block height
+    python run_unified_collection.py --layer-block 5730721
 
     # Run in continuous monitoring mode
     python run_unified_collection.py --monitor --interval 3600
@@ -36,6 +47,26 @@ import time
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import List, Tuple, Set
+
+def check_virtual_env():
+    """Check if running in the correct virtual environment."""
+    venv_path = Path('.venv/bin/activate')
+    if not venv_path.exists():
+        print("Error: Virtual environment not found at .venv/")
+        print("Please create and activate the virtual environment first:")
+        print("  python -m venv .venv")
+        print("  source .venv/bin/activate")
+        sys.exit(1)
+        
+    # Check if we're running in a virtual environment
+    if not hasattr(sys, 'real_prefix') and not (hasattr(sys, 'base_prefix') and sys.base_prefix != sys.prefix):
+        print("Error: Script must be run within the virtual environment")
+        print("Please activate the virtual environment first:")
+        print("  source .venv/bin/activate")
+        sys.exit(1)
+
+# Check virtual environment before proceeding
+check_virtual_env()
 
 # Add project root to path for imports
 project_root = Path(__file__).parent
@@ -72,6 +103,12 @@ signal.signal(signal.SIGTERM, signal_handler)
 
 # Initialize logger
 logger = logging.getLogger(__name__)
+
+def check_shutdown():
+    """Check if shutdown was requested and exit if so."""
+    if shutdown_requested:
+        logger.info("Shutdown requested, exiting...")
+        sys.exit(0)
 
 # Bridge CSV configuration with environment variable support
 def get_bridge_csv_paths():
@@ -189,6 +226,61 @@ def run_historic_collection(collector: UnifiedDataCollector, args):
     """Run historic data collection - one sample per day back to genesis."""
     logger.info("Starting historic data collection")
     
+    # FIRST: Re-run any incomplete daily collections that already exist
+    logger.info("Checking for incomplete snapshots to re-run...")
+    incomplete_snapshots = collector.db.get_incomplete_snapshots(min_completeness=1.0)
+    
+    if incomplete_snapshots:
+        logger.info(f"Found {len(incomplete_snapshots)} incomplete snapshots to re-run")
+        updated_count = 0
+        
+        for i, snapshot in enumerate(incomplete_snapshots, 1):
+            # Get values with proper type handling
+            eth_block_number_raw = snapshot.get('eth_block_number')
+            eth_timestamp_raw = snapshot.get('eth_block_timestamp')
+            current_score = snapshot.get('data_completeness_score', 0)
+            collection_time = snapshot.get('collection_time', 'Unknown')
+            
+            # Skip snapshots with missing required data
+            if eth_block_number_raw is None or eth_timestamp_raw is None:
+                logger.warning(f"Skipping incomplete snapshot with missing block number or timestamp")
+                continue
+            
+            # Convert to int for the collection call (we know they're not None from check above)
+            eth_block_number: int = int(eth_block_number_raw)  # type: ignore
+            eth_timestamp: int = int(eth_timestamp_raw)  # type: ignore
+            
+            logger.info(f"Re-running incomplete snapshot {i}/{len(incomplete_snapshots)}: "
+                       f"ETH block {eth_block_number} (timestamp {eth_timestamp}, "
+                       f"collected {collection_time}, completeness: {current_score:.2f})")
+            
+            try:
+                if collector.collect_unified_snapshot(eth_block_number, eth_timestamp):
+                    updated_count += 1
+                    logger.info(f"Successfully updated incomplete snapshot for ETH block {eth_block_number}")
+                else:
+                    logger.warning(f"Failed to update incomplete snapshot for ETH block {eth_block_number}")
+                
+                # Add delay between re-collections
+                if i < len(incomplete_snapshots):
+                    time.sleep(1)
+                    
+            except Exception as e:
+                logger.error(f"Error re-running incomplete snapshot for ETH block {eth_block_number}: {e}")
+                continue
+                
+            # Check for shutdown signal during incomplete snapshot processing
+            if shutdown_requested:
+                logger.info("Shutdown requested during incomplete snapshot re-run, stopping")
+                return updated_count
+        
+        logger.info(f"Completed re-running incomplete snapshots: {updated_count}/{len(incomplete_snapshots)} updated")
+    else:
+        logger.info("No incomplete snapshots found to re-run")
+    
+    # SECOND: Proceed with normal historic collection for missing days
+    logger.info("Starting daily historic data collection for missing days...")
+    
     # Get node height information
     latest_height, earliest_height = get_node_height_info(collector)
     if latest_height is None or earliest_height is None:
@@ -235,14 +327,25 @@ def run_historic_collection(collector: UnifiedDataCollector, args):
         
         logger.info(f"=== DAY {day_offset + 1}/{total_days}: {target_date.strftime('%Y-%m-%d')} ===")
         
-        # Check if we already have data for this day (within 12 hours)
+        # Check if we already have COMPLETE data for this day (within 12 hours)
         existing_timestamps = collector.db.get_existing_eth_timestamps()
         skip_day = False
+        existing_completeness = 0.0
+        
         for existing_ts in existing_timestamps:
             if abs(target_timestamp - existing_ts) <= 12 * 3600:  # 12 hour tolerance
-                logger.info(f"Data already exists for {target_date.strftime('%Y-%m-%d')}, skipping")
-                skip_day = True
-                break
+                # Found existing data - check if it's complete
+                existing_snapshot = collector.db.get_unified_snapshot_by_eth_timestamp(existing_ts)
+                if existing_snapshot:
+                    existing_completeness = existing_snapshot.get('data_completeness_score', 0.0)
+                    if existing_completeness >= 1.0:
+                        logger.info(f"Complete data already exists for {target_date.strftime('%Y-%m-%d')} (completeness: {existing_completeness:.2f}), skipping")
+                        skip_day = True
+                        break
+                    else:
+                        logger.info(f"Incomplete data found for {target_date.strftime('%Y-%m-%d')} (completeness: {existing_completeness:.2f}), will re-collect")
+                        # Don't skip - we need to re-collect this day to fill in missing data
+                        break
         
         if skip_day:
             continue
@@ -291,7 +394,8 @@ def run_historic_collection(collector: UnifiedDataCollector, args):
             
             # Create a synthetic Ethereum block entry (since we're doing historic collection)
             # Use the layer timestamp as the "Ethereum" timestamp for consistency
-            eth_block_number = collector.find_ethereum_block_for_timestamp(layer_timestamp)
+            eth_block_result = collector.find_ethereum_block_for_timestamp(layer_timestamp)
+            eth_block_number: int = eth_block_result if eth_block_result is not None else 0
             eth_timestamp = layer_timestamp
             
             # Collect unified snapshot for this day
@@ -314,8 +418,11 @@ def run_historic_collection(collector: UnifiedDataCollector, args):
             
             continue
     
-    logger.info(f"Historic collection completed: {successful_collections} days processed")
-    return successful_collections
+    total_updated = (updated_count if 'updated_count' in locals() else 0) + successful_collections
+    logger.info(f"Historic collection completed: {successful_collections} new days processed, "
+               f"{updated_count if 'updated_count' in locals() else 0} incomplete snapshots re-run, "
+               f"total: {total_updated}")
+    return total_updated
 
 def get_node_height_info(collector: UnifiedDataCollector):
     """Get current and earliest block heights from layerd status."""
@@ -474,10 +581,6 @@ def run_monitoring_mode(collector: UnifiedDataCollector, args):
     logger.info(f"Starting monitoring mode with {args.interval} second intervals")
     logger.info("Press Ctrl+C to stop gracefully")
     
-    # Register signal handlers for graceful shutdown
-    signal.signal(signal.SIGINT, signal_handler)
-    signal.signal(signal.SIGTERM, signal_handler)
-    
     cycles_completed = 0
     
     try:
@@ -486,8 +589,13 @@ def run_monitoring_mode(collector: UnifiedDataCollector, args):
             start_time = datetime.now()
             
             try:
+                # Check for shutdown before each major operation
+                check_shutdown()
+                
                 # Run collection
                 processed = run_single_collection(collector, args)
+                
+                check_shutdown()
                 
                 # Optionally run backfill periodically
                 if cycles_completed % 5 == 0:  # Every 5th cycle
@@ -495,6 +603,8 @@ def run_monitoring_mode(collector: UnifiedDataCollector, args):
                     updated = run_backfill(collector, args)
                 
                 cycles_completed += 1
+                
+                check_shutdown()
                 
                 # Show summary periodically
                 if cycles_completed % 3 == 0:  # Every 3rd cycle
@@ -513,19 +623,122 @@ def run_monitoring_mode(collector: UnifiedDataCollector, args):
                           timedelta(seconds=sleep_time)
                 logger.info(f"Next collection cycle at: {next_run}")
                 
-                # Sleep in small increments to check for shutdown
+                # Sleep in smaller increments (1 second) to be more responsive to shutdown
                 slept = 0
                 while slept < sleep_time and not shutdown_requested:
-                    time.sleep(min(5, sleep_time - slept))
-                    slept += 5
+                    time.sleep(min(1, sleep_time - slept))
+                    slept += 1
                     
     except KeyboardInterrupt:
         logger.info("Monitoring stopped by user")
     except Exception as e:
         logger.error(f"Error in monitoring mode: {e}")
         raise
+    finally:
+        logger.info(f"Successfully completed {cycles_completed} collection cycles")
+        sys.exit(0)
+
+def run_specific_block_collection(collector: UnifiedDataCollector, args) -> int:
+    """
+    Run unified data collection for a specific block height.
     
-    logger.info(f"Monitoring completed after {cycles_completed} cycles")
+    Args:
+        collector: UnifiedDataCollector instance
+        args: Command line arguments containing either eth_block or layer_block
+        
+    Returns:
+        1 if successful, 0 if failed
+    """
+    logger.info("Starting specific block height collection")
+    
+    eth_block_number = None
+    eth_timestamp = None
+    
+    if args.eth_block:
+        # User specified an Ethereum block height
+        logger.info(f"Collecting data for Ethereum block {args.eth_block}")
+        
+        # Get Ethereum block information
+        if not collector.w3:
+            logger.error("Ethereum Web3 connection not available")
+            return 0
+            
+        try:
+            block = collector.w3.eth.get_block(args.eth_block)
+            eth_block_number = block.get('number')
+            eth_timestamp = block.get('timestamp')
+            
+            if eth_block_number is None or eth_timestamp is None:
+                logger.error(f"Invalid block data received for block {args.eth_block}")
+                return 0
+            
+            logger.info(f"Ethereum block {eth_block_number} timestamp: {eth_timestamp} "
+                       f"({datetime.fromtimestamp(eth_timestamp)})")
+                       
+        except Exception as e:
+            logger.error(f"Failed to get Ethereum block {args.eth_block}: {e}")
+            return 0
+            
+    elif args.layer_block:
+        # User specified a Tellor Layer block height
+        logger.info(f"Collecting data for Tellor Layer block {args.layer_block}")
+        
+        # Get Tellor Layer block information
+        layer_block_info = collector.supply_collector.get_block_info(args.layer_block)
+        if not layer_block_info:
+            logger.error(f"Failed to get Tellor Layer block {args.layer_block} information")
+            return 0
+            
+        layer_height, layer_timestamp = layer_block_info
+        
+        logger.info(f"Tellor Layer block {layer_height} timestamp: {layer_timestamp} "
+                   f"({datetime.fromtimestamp(layer_timestamp)})")
+        
+        # For Tellor Layer blocks, we need to find the corresponding Ethereum timestamp
+        # We'll use the layer timestamp as the target for the unified collection
+        eth_timestamp = layer_timestamp
+        
+        # Try to find the closest Ethereum block for this timestamp
+        eth_block_number = collector.find_ethereum_block_for_timestamp(eth_timestamp)
+        if eth_block_number is None:
+            logger.warning(f"Could not find corresponding Ethereum block for timestamp {eth_timestamp}, using 0")
+            eth_block_number = 0
+    
+    else:
+        logger.error("No block height specified (use --eth-block or --layer-block)")
+        return 0
+    
+    # Check if we already have complete data for this timestamp
+    existing_snapshot = collector.db.get_unified_snapshot_by_eth_timestamp(eth_timestamp)
+    if existing_snapshot and existing_snapshot.get('data_completeness_score', 0) >= 1.0:
+        logger.info(f"Complete data already exists for timestamp {eth_timestamp}")
+        logger.info(f"Existing snapshot: ETH block {existing_snapshot.get('eth_block_number')}, "
+                   f"Layer block {existing_snapshot.get('layer_block_height')}, "
+                   f"completeness: {existing_snapshot.get('data_completeness_score', 0):.2f}")
+        return 1
+    
+    # Collect the unified snapshot
+    try:
+        success = collector.collect_unified_snapshot(
+            eth_block_number, 
+            eth_timestamp, 
+            layer_block_height=args.layer_block if args.layer_block else None
+        )
+        
+        if success:
+            logger.info(f"Successfully collected unified snapshot for:")
+            logger.info(f"  Ethereum block: {eth_block_number}")
+            logger.info(f"  Timestamp: {eth_timestamp} ({datetime.fromtimestamp(eth_timestamp)})")
+            if args.layer_block:
+                logger.info(f"  Tellor Layer block: {args.layer_block}")
+            return 1
+        else:
+            logger.error("Failed to collect unified snapshot")
+            return 0
+            
+    except Exception as e:
+        logger.error(f"Error collecting unified snapshot: {e}")
+        return 0
 
 def show_summary(collector: UnifiedDataCollector):
     """Show data collection summary."""
@@ -591,6 +804,10 @@ def main():
                            help='Collect all historic data (one sample per day back to genesis)')
     mode_group.add_argument('--bridge-historic', action='store_true',
                            help='Collect data at Ethereum blocks where bridge activity occurred')
+    mode_group.add_argument('--eth-block', type=int, metavar='BLOCK_HEIGHT',
+                           help='Collect data at specific Ethereum block height')
+    mode_group.add_argument('--layer-block', type=int, metavar='BLOCK_HEIGHT',
+                           help='Collect data at specific Tellor Layer block height')
     
     # Monitoring parameters
     parser.add_argument('--interval', type=int, default=3600,
@@ -635,6 +852,10 @@ def main():
             run_historic_collection(collector, args)
         elif args.bridge_historic:
             run_bridge_historic_collection(collector, args)
+        elif args.eth_block:
+            run_specific_block_collection(collector, args)
+        elif args.layer_block:
+            run_specific_block_collection(collector, args)
         else:
             run_single_collection(collector, args)
             

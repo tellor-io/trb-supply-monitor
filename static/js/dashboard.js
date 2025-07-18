@@ -13,7 +13,6 @@ class HistoricalDashboard {
             bridge: null,
             balance: null
         };
-        this.currentChart = 'supply';
         
         this.init();
     }
@@ -25,19 +24,13 @@ class HistoricalDashboard {
     
     bindEvents() {
         // Historical data buttons
-        document.getElementById('refreshHistoryBtn').addEventListener('click', () => this.loadHistoricalData());
-        document.getElementById('collectUnifiedBtn').addEventListener('click', () => this.triggerUnifiedCollection());
         document.getElementById('timeRangeSelect').addEventListener('change', (e) => this.changeTimeRange(e.target.value));
         
         // Legacy buttons
         document.getElementById('refreshBtn').addEventListener('click', () => this.loadInitialData());
-        document.getElementById('collectBtn').addEventListener('click', () => this.triggerCollection());
         document.getElementById('exportDataBtn').addEventListener('click', () => this.exportData());
         
-        // Chart buttons
-        document.getElementById('toggleSupplyChart').addEventListener('click', () => this.showChart('supply'));
-        document.getElementById('toggleBridgeChart').addEventListener('click', () => this.showChart('bridge'));
-        document.getElementById('toggleBalanceChart').addEventListener('click', () => this.showChart('balance'));
+        // Chart toggle buttons removed - now showing all charts simultaneously
     }
     
     async loadInitialData() {
@@ -191,33 +184,7 @@ class HistoricalDashboard {
         this.loadHistoricalData();
     }
     
-    async triggerUnifiedCollection() {
-        if (!confirm('This will trigger unified data collection. This may take several minutes. Continue?')) {
-            return;
-        }
-        
-        this.showLoading('Collecting unified data...');
-        try {
-            const hours_back = Math.min(this.currentTimeRange, 24); // Limit collection scope
-            const response = await fetch(`${this.apiBase}/api/unified/collect?hours_back=${hours_back}&max_blocks=50`, { 
-                method: 'POST' 
-            });
-            const data = await response.json();
-            
-            if (data.status === 'success') {
-                this.showSuccess(`Unified collection completed: ${data.message || 'Success'}`);
-                // Wait a moment then refresh data
-                setTimeout(() => this.loadHistoricalData(), 2000);
-            } else {
-                this.showError(`Collection failed: ${data.message || 'Unknown error'}`);
-            }
-        } catch (error) {
-            console.error('Error triggering unified collection:', error);
-            this.showError('Failed to trigger unified collection');
-        } finally {
-            this.hideLoading();
-        }
-    }
+
     
     async loadSummary() {
         try {
@@ -341,29 +308,7 @@ class HistoricalDashboard {
         `).join('');
     }
     
-    async triggerCollection() {
-        if (!confirm('This will trigger a new balance collection. This may take several minutes. Continue?')) {
-            return;
-        }
-        
-        this.showLoading('Collecting balance data...');
-        try {
-            const response = await fetch(`${this.apiBase}/api/collect`, { method: 'POST' });
-            const data = await response.json();
-            
-            if (data.status === 'success') {
-                this.showSuccess('Balance collection completed successfully');
-                this.loadInitialData();
-            } else {
-                this.showError('Collection failed');
-            }
-        } catch (error) {
-            console.error('Error triggering collection:', error);
-            this.showError('Failed to trigger collection');
-        } finally {
-            this.hideLoading();
-        }
-    }
+
     
     async exportData() {
         try {
@@ -479,35 +424,7 @@ class HistoricalDashboard {
         alert(message);
     }
     
-    // Chart Management Methods
-    showChart(chartType) {
-        // Update button states
-        document.querySelectorAll('[id^="toggle"][id$="Chart"]').forEach(btn => {
-            btn.classList.remove('btn-primary');
-            btn.classList.add('btn-outline');
-            btn.setAttribute('data-active', 'false');
-        });
-        
-        const activeBtn = document.getElementById(`toggle${chartType.charAt(0).toUpperCase() + chartType.slice(1)}Chart`);
-        activeBtn.classList.remove('btn-outline');
-        activeBtn.classList.add('btn-primary');
-        activeBtn.setAttribute('data-active', 'true');
-        
-        // Hide all chart containers
-        document.querySelectorAll('.chart-container').forEach(container => {
-            container.classList.add('hidden');
-        });
-        
-        // Show selected chart container
-        document.getElementById(`${chartType}ChartContainer`).classList.remove('hidden');
-        
-        this.currentChart = chartType;
-        
-        // Update chart if data is available
-        if (this.historicalData.length > 0) {
-            this.updateCharts({ timeline: this.historicalData });
-        }
-    }
+    // Chart Management Methods - Removed chart toggling, now showing all charts simultaneously
     
     updateCharts(data) {
         if (!data.timeline || data.timeline.length === 0) {
@@ -527,36 +444,18 @@ class HistoricalDashboard {
         const labels = sortedTimeline.map(d => new Date((d.timestamp || 0) * 1000));
         
         // Supply Overview Chart
-        if (this.currentChart === 'supply' || !this.charts.supply) {
-            this.createSupplyChart(labels, sortedTimeline);
-        }
-        
-        // Bridge & Staking Chart
-        if (this.currentChart === 'bridge' || !this.charts.bridge) {
-            this.createBridgeChart(labels, sortedTimeline);
-        }
-        
-        // Active Balances Chart
-        if (this.currentChart === 'balance' || !this.charts.balance) {
-            this.createBalanceChart(labels, sortedTimeline);
-        }
-    }
-    
-    createSupplyChart(labels, timeline) {
-        const ctx = document.getElementById('supplyChart').getContext('2d');
-        
         if (this.charts.supply) {
             this.charts.supply.destroy();
         }
         
-        this.charts.supply = new Chart(ctx, {
+        this.charts.supply = new Chart(document.getElementById('supplyChart').getContext('2d'), {
             type: 'line',
             data: {
                 labels: labels,
                 datasets: [
                     {
                         label: 'Total Layer Supply',
-                        data: timeline.map(d => d.layer_total_supply_trb || 0),
+                        data: sortedTimeline.map(d => d.layer_total_supply_trb || 0),
                         borderColor: '#00ff88',
                         backgroundColor: 'rgba(0, 255, 136, 0.1)',
                         fill: true,
@@ -566,7 +465,7 @@ class HistoricalDashboard {
                     },
                     {
                         label: 'Free Floating TRB',
-                        data: timeline.map(d => d.free_floating_trb || 0),
+                        data: sortedTimeline.map(d => d.free_floating_trb || 0),
                         borderColor: '#00d4ff',
                         backgroundColor: 'rgba(0, 212, 255, 0.1)',
                         fill: true,
@@ -576,7 +475,7 @@ class HistoricalDashboard {
                     },
                     {
                         label: 'Bridge Balance',
-                        data: timeline.map(d => d.bridge_balance_trb || 0),
+                        data: sortedTimeline.map(d => d.bridge_balance_trb || 0),
                         borderColor: '#ff6b6b',
                         backgroundColor: 'rgba(255, 107, 107, 0.1)',
                         fill: false,
@@ -588,23 +487,20 @@ class HistoricalDashboard {
             },
             options: this.getChartOptions('TRB Supply Overview', 'TRB Amount')
         });
-    }
-    
-    createBridgeChart(labels, timeline) {
-        const ctx = document.getElementById('bridgeChart').getContext('2d');
         
+        // Bridge & Staking Chart
         if (this.charts.bridge) {
             this.charts.bridge.destroy();
         }
         
-        this.charts.bridge = new Chart(ctx, {
+        this.charts.bridge = new Chart(document.getElementById('bridgeChart').getContext('2d'), {
             type: 'line',
             data: {
                 labels: labels,
                 datasets: [
                     {
                         label: 'Bridge Balance',
-                        data: timeline.map(d => d.bridge_balance_trb || 0),
+                        data: sortedTimeline.map(d => d.bridge_balance_trb || 0),
                         borderColor: '#ff6b6b',
                         backgroundColor: 'rgba(255, 107, 107, 0.2)',
                         fill: true,
@@ -615,7 +511,7 @@ class HistoricalDashboard {
                     },
                     {
                         label: 'Bonded Tokens',
-                        data: timeline.map(d => d.bonded_tokens || 0),
+                        data: sortedTimeline.map(d => d.bonded_tokens || 0),
                         borderColor: '#00ff88',
                         backgroundColor: 'rgba(0, 255, 136, 0.1)',
                         fill: false,
@@ -626,7 +522,7 @@ class HistoricalDashboard {
                     },
                     {
                         label: 'Not Bonded Tokens',
-                        data: timeline.map(d => d.not_bonded_tokens || 0),
+                        data: sortedTimeline.map(d => d.not_bonded_tokens || 0),
                         borderColor: '#ffd700',
                         backgroundColor: 'rgba(255, 215, 0, 0.1)',
                         fill: false,
@@ -639,23 +535,20 @@ class HistoricalDashboard {
             },
             options: this.getChartOptions('Bridge & Staking Metrics', 'TRB Amount')
         });
-    }
-    
-    createBalanceChart(labels, timeline) {
-        const ctx = document.getElementById('balanceChart').getContext('2d');
         
+        // Active Balances Chart
         if (this.charts.balance) {
             this.charts.balance.destroy();
         }
         
-        this.charts.balance = new Chart(ctx, {
+        this.charts.balance = new Chart(document.getElementById('balanceChart').getContext('2d'), {
             type: 'line',
             data: {
                 labels: labels,
                 datasets: [
                     {
                         label: 'Total Active Balance',
-                        data: timeline.map(d => d.total_trb_balance || 0),
+                        data: sortedTimeline.map(d => d.total_trb_balance || 0),
                         borderColor: '#00d4ff',
                         backgroundColor: 'rgba(0, 212, 255, 0.2)',
                         fill: true,
@@ -665,19 +558,8 @@ class HistoricalDashboard {
                         yAxisID: 'y'
                     },
                     {
-                        label: 'Active Addresses',
-                        data: timeline.map(d => d.total_addresses || 0),
-                        borderColor: '#ff9500',
-                        backgroundColor: 'rgba(255, 149, 0, 0.1)',
-                        fill: false,
-                        tension: 0.1,
-                        pointRadius: 2,
-                        pointHoverRadius: 6,
-                        yAxisID: 'y1'
-                    },
-                    {
                         label: 'Addresses with Balance',
-                        data: timeline.map(d => d.addresses_with_balance || 0),
+                        data: sortedTimeline.map(d => d.addresses_with_balance || 0),
                         borderColor: '#00ff88',
                         backgroundColor: 'rgba(0, 255, 136, 0.1)',
                         fill: false,
@@ -813,13 +695,18 @@ class HistoricalDashboard {
     }
     
     showNoDataState() {
-        document.querySelectorAll('.chart-container').forEach(container => {
-            container.classList.add('hidden');
-        });
+        // Hide all individual chart containers when no data is available
+        document.getElementById('supplyChartContainer').classList.add('hidden');
+        document.getElementById('bridgeChartContainer').classList.add('hidden');
+        document.getElementById('balanceChartContainer').classList.add('hidden');
         document.getElementById('chartNoData').classList.remove('hidden');
     }
     
     hideNoDataState() {
+        // Show all chart containers when data is available
+        document.getElementById('supplyChartContainer').classList.remove('hidden');
+        document.getElementById('bridgeChartContainer').classList.remove('hidden');
+        document.getElementById('balanceChartContainer').classList.remove('hidden');
         document.getElementById('chartNoData').classList.add('hidden');
     }
 }

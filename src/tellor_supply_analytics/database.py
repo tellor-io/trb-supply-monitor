@@ -597,12 +597,19 @@ class BalancesDatabase:
     def get_unified_snapshots(self, limit: int = 100, min_completeness: float = 0.0) -> List[Dict]:
         """Get unified snapshots ordered by Ethereum block timestamp."""
         with sqlite3.connect(self.db_path) as conn:
+            # First get the latest timestamp in the database
+            cursor = conn.execute('''
+                SELECT MAX(eth_block_timestamp) FROM unified_snapshots
+            ''')
+            latest_timestamp = cursor.fetchone()[0] or 0
+            
+            # Then get snapshots ordered by how close they are to now
             cursor = conn.execute('''
                 SELECT * FROM unified_snapshots 
                 WHERE data_completeness_score >= ?
-                ORDER BY eth_block_timestamp DESC 
+                ORDER BY ABS(? - eth_block_timestamp), eth_block_timestamp DESC
                 LIMIT ?
-            ''', (min_completeness, limit))
+            ''', (min_completeness, latest_timestamp, limit))
             
             columns = [desc[0] for desc in cursor.description]
             return [dict(zip(columns, row)) for row in cursor.fetchall()]
@@ -706,3 +713,47 @@ class BalancesDatabase:
             else:
                 logger.warning(f"No unified snapshot found for ETH timestamp {eth_block_timestamp}")
                 return False 
+
+    def delete_unified_snapshot(self, snapshot_id: int) -> bool:
+        """
+        Delete a unified snapshot and its associated balance records.
+        
+        Args:
+            snapshot_id: ID of the unified snapshot to delete
+            
+        Returns:
+            True if deletion was successful, False otherwise
+        """
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                # First get the eth_block_timestamp for this snapshot
+                cursor = conn.execute('''
+                    SELECT eth_block_timestamp FROM unified_snapshots 
+                    WHERE id = ?
+                ''', (snapshot_id,))
+                
+                row = cursor.fetchone()
+                if not row:
+                    logger.warning(f"Snapshot {snapshot_id} not found")
+                    return False
+                
+                eth_block_timestamp = row[0]
+                
+                # Delete associated balance records first (due to foreign key constraint)
+                conn.execute('''
+                    DELETE FROM unified_balance_snapshots 
+                    WHERE eth_block_timestamp = ?
+                ''', (eth_block_timestamp,))
+                
+                # Then delete the snapshot itself
+                conn.execute('''
+                    DELETE FROM unified_snapshots 
+                    WHERE id = ?
+                ''', (snapshot_id,))
+                
+                logger.info(f"Deleted unified snapshot {snapshot_id} and its balance records")
+                return True
+                
+        except Exception as e:
+            logger.error(f"Error deleting unified snapshot {snapshot_id}: {e}")
+            return False 

@@ -55,8 +55,8 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Configuration
-TELLOR_LAYER_RPC_URL = os.getenv('TELLOR_LAYER_RPC_URL', 'https://node-palmito.tellorlayer.com/rpc/')
-LAYER_GRPC_URL = os.getenv('LAYER_GRPC_URL', 'https://node-palmito.tellorlayer.com')
+TELLOR_LAYER_RPC_URL = os.getenv('TELLOR_LAYER_RPC_URL')
+LAYER_GRPC_URL = os.getenv('LAYER_GRPC_URL')
 ETHEREUM_RPC_URL = os.getenv('ETHEREUM_RPC_URL', 'https://rpc.sepolia.org')
 SEPOLIA_TRB_CONTRACT = os.getenv('SEPOLIA_TRB_CONTRACT', '0x80fc34a2f9FfE86F41580F47368289C402DEc660')
 SEPOLIA_BRIDGE_CONTRACT = os.getenv('SEPOLIA_BRIDGE_CONTRACT', '0x5acb5977f35b1A91C4fE0F4386eB669E046776F2')

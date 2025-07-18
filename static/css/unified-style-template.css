@@ -118,12 +118,10 @@ h4 { font-size: 1rem; color: var(--text-tertiary); }
 .text-secondary { color: var(--text-secondary); }
 .text-tertiary { color: var(--text-tertiary); }
 .text-muted { color: var(--text-muted); }
+.text-success { color: #28a745; }
 .text-accent { color: var(--accent-orange); }
 
-/* ========================================
-   3. BUTTON SYSTEM
-   ======================================== */
-
+/* Button styles */
 .btn {
     padding: var(--spacing-md) var(--spacing-md);
     border: 2px solid transparent;
@@ -180,6 +178,30 @@ h4 { font-size: 1rem; color: var(--text-tertiary); }
 .btn:disabled {
     opacity: 0.5;
     cursor: not-allowed;
+}
+
+.btn-success {
+    background: #28a745;
+    color: white;
+    border-color: #28a745;
+}
+
+.btn-success:hover {
+    background: #218838;
+    border-color: #1e7e34;
+    box-shadow: 0 0 10px rgba(40, 167, 69, 0.3);
+}
+
+.btn-warning {
+    background: #ffc107;
+    color: #212529;
+    border-color: #ffc107;
+}
+
+.btn-warning:hover {
+    background: #e0a800;
+    border-color: #d39e00;
+    box-shadow: 0 0 10px rgba(255, 193, 7, 0.3);
 }
 
 /* Button Sizes */
@@ -641,6 +663,12 @@ h4 { font-size: 1rem; color: var(--text-tertiary); }
 .mb-md { margin-bottom: var(--spacing-md); }
 .mb-lg { margin-bottom: var(--spacing-lg); }
 .mb-xl { margin-bottom: var(--spacing-xl); }
+
+.mr-xs { margin-right: var(--spacing-xs); }
+.mr-sm { margin-right: var(--spacing-sm); }
+.mr-md { margin-right: var(--spacing-md); }
+.mr-lg { margin-right: var(--spacing-lg); }
+.mr-xl { margin-right: var(--spacing-xl); }
 
 /* ========================================
    12. ANIMATIONS

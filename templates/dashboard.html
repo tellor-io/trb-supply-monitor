@@ -18,27 +18,16 @@
         <nav class="nav">
             <ul class="nav-list">
                 <li><a href="#" class="nav-link active" data-section="dashboard">Historical Dashboard</a></li>
-                <li><a href="#" class="nav-link" data-section="timeline">Timeline</a></li>
-                <li><a href="#" class="nav-link" data-section="balances">Balances</a></li>
-                <li><a href="#" class="nav-link" data-section="analytics">Analytics</a></li>
             </ul>
         </nav>
 
         <!-- Main Content -->
         <main class="main">
-            <!-- Historical Data Table Section -->
-            <section class="card mb-xl" id="historicalSection">
+            <!-- Timeline Charts Section - Moved to top -->
+            <section class="card mb-xl" id="chartsSection">
                 <div class="card-header">
-                    <h1>Historical Supply Data - Last 24 Hours</h1>
+                    <h2>Supply Trends</h2>
                     <div class="flex gap-sm">
-                        <button class="btn btn-sm btn-primary" id="refreshHistoryBtn">
-                            <i class="fas fa-sync-alt"></i>
-                            Refresh Timeline
-                        </button>
-                        <button class="btn btn-sm btn-secondary" id="collectUnifiedBtn">
-                            <i class="fas fa-database"></i>
-                            Trigger Collection
-                        </button>
                         <select id="timeRangeSelect" class="form-input" style="width: auto;">
                             <option value="6">Last 6 hours</option>
                             <option value="12">Last 12 hours</option>
@@ -50,6 +39,36 @@
                             <option value="8760" selected>All Available Data</option>
                         </select>
                     </div>
+                </div>
+                <div class="card-body">
+                    <!-- Supply Overview Chart -->
+                    <div id="supplyChartContainer" class="chart-container mb-lg">
+                        <canvas id="supplyChart" width="400" height="200"></canvas>
+                    </div>
+                    
+                    <!-- Bridge & Staking Chart -->
+                    <div id="bridgeChartContainer" class="chart-container mb-lg">
+                        <canvas id="bridgeChart" width="400" height="200"></canvas>
+                    </div>
+                    
+                    <!-- Active Balances Chart -->
+                    <div id="balanceChartContainer" class="chart-container mb-lg">
+                        <canvas id="balanceChart" width="400" height="200"></canvas>
+                    </div>
+                    
+                    <!-- No Data State -->
+                    <div id="chartNoData" class="text-center text-muted hidden">
+                        <i class="fas fa-chart-line"></i>
+                        <div>No data available for charts</div>
+                        <small>Try collecting data or selecting a different time range</small>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Historical Data Table Section -->
+            <section class="card mb-xl" id="historicalSection">
+                <div class="card-header">
+                    <h1>TRB Supply Data</h1>
                 </div>
                 <div class="card-body">
                     <div class="mb-md" id="timelineStats">
@@ -116,56 +135,6 @@
                 </div>
             </section>
 
-            <!-- Timeline Charts Section -->
-            <section class="card mb-xl" id="chartsSection">
-                <div class="card-header">
-                    <h2>Supply Trends</h2>
-                    <div class="flex gap-sm">
-                        <button class="btn btn-sm btn-primary" id="toggleSupplyChart" data-active="true">
-                            <i class="fas fa-chart-line"></i>
-                            Supply Overview
-                        </button>
-                        <button class="btn btn-sm btn-outline" id="toggleBridgeChart" data-active="false">
-                            <i class="fas fa-exchange-alt"></i>
-                            Bridge & Staking
-                        </button>
-                        <button class="btn btn-sm btn-outline" id="toggleBalanceChart" data-active="false">
-                            <i class="fas fa-wallet"></i>
-                            Active Balances
-                        </button>
-                    </div>
-                </div>
-                <div class="card-body">
-                    <!-- Supply Overview Chart -->
-                    <div id="supplyChartContainer" class="chart-container">
-                        <canvas id="supplyChart" width="400" height="200"></canvas>
-                    </div>
-                    
-                    <!-- Bridge & Staking Chart -->
-                    <div id="bridgeChartContainer" class="chart-container hidden">
-                        <canvas id="bridgeChart" width="400" height="200"></canvas>
-                    </div>
-                    
-                    <!-- Active Balances Chart -->
-                    <div id="balanceChartContainer" class="chart-container hidden">
-                        <canvas id="balanceChart" width="400" height="200"></canvas>
-                    </div>
-                    
-                    <!-- Chart Loading State -->
-                    <div id="chartLoading" class="text-center text-muted hidden">
-                        <i class="fas fa-spinner fa-spin"></i>
-                        <span>Loading chart data...</span>
-                    </div>
-                    
-                    <!-- No Data State -->
-                    <div id="chartNoData" class="text-center text-muted hidden">
-                        <i class="fas fa-chart-line"></i>
-                        <div>No data available for charts</div>
-                        <small>Try collecting data or selecting a different time range</small>
-                    </div>
-                </div>
-            </section>
-
             <!-- Active Balances Section -->
             <section class="card" id="balancesSection">
                 <div class="card-header">
@@ -175,11 +144,7 @@
                             <i class="fas fa-sync-alt"></i>
                             Refresh Data
                         </button>
-                        <button class="btn btn-sm btn-secondary" id="collectBtn">
-                            <i class="fas fa-database"></i>
-                            Trigger Collection
-                        </button>
-                        <button class="btn btn-sm btn-primary" id="exportDataBtn">
+                        <button class="btn btn-sm btn-secondary" id="exportDataBtn">
                             <i class="fas fa-download"></i>
                             Export Data
                         </button>
