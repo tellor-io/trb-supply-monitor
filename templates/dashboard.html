@@ -4,7 +4,8 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Tellor Supply Analytics - Historical Dashboard</title>
-    <link rel="stylesheet" href="/static/css/unified-style-template.css">
+    <!-- Static assets use root_path for serving under nginx location prefixes -->
+    <link rel="stylesheet" href="{{ root_path }}/static/css/unified-style-template.css">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -17,7 +18,7 @@
         <!-- Navigation -->
         <nav class="nav">
             <ul class="nav-list">
-                <li><a href="#" class="nav-link active" data-section="dashboard">Historical Dashboard</a></li>
+                <li><a href="#" class="nav-link active" data-section="dashboard">TRB Supply Tracker (Palmito & Bridge)</a></li>
             </ul>
         </nav>
 
@@ -55,20 +56,13 @@
                     <div id="balanceChartContainer" class="chart-container mb-lg">
                         <canvas id="balanceChart" width="400" height="200"></canvas>
                     </div>
-                    
-                    <!-- No Data State -->
-                    <div id="chartNoData" class="text-center text-muted hidden">
-                        <i class="fas fa-chart-line"></i>
-                        <div>No data available for charts</div>
-                        <small>Try collecting data or selecting a different time range</small>
-                    </div>
                 </div>
             </section>
 
             <!-- Historical Data Table Section -->
             <section class="card mb-xl" id="historicalSection">
                 <div class="card-header">
-                    <h1>TRB Supply Data</h1>
+                    <h2>TRB Supply Data</h2>
                 </div>
                 <div class="card-body">
                     <div class="mb-md" id="timelineStats">
@@ -178,6 +172,10 @@
         <div class="loading-text">Loading data...</div>
     </div>
 
-    <script src="/static/js/dashboard.js"></script>
+    <script>
+        // Set the root path for API calls when served under a proxy
+        window.ROOT_PATH = "{{ root_path }}";
+    </script>
+    <script src="{{ root_path }}/static/js/dashboard.js"></script>
 </body>
 </html>

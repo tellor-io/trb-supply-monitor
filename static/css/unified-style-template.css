@@ -965,3 +965,35 @@ h4 { font-size: 1rem; color: var(--text-tertiary); }
    - Neon: Use bright, vibrant colors
    
    ======================================== */
+
+/* Chart interaction styles */
+.chart-container canvas {
+    cursor: crosshair !important;
+}
+
+.chart-container canvas:hover {
+    cursor: pointer !important;
+}
+
+/* Chart clicked row highlight */
+.chart-clicked-row {
+    background-color: rgba(0, 255, 136, 0.2) !important;
+    border-left: 4px solid var(--color-primary) !important;
+    animation: highlightPulse 0.5s ease-in-out;
+    transition: background-color 0.3s ease, border-left 0.3s ease;
+}
+
+@keyframes highlightPulse {
+    0% {
+        background-color: rgba(0, 255, 136, 0.4);
+        transform: scale(1);
+    }
+    50% {
+        background-color: rgba(0, 255, 136, 0.3);
+        transform: scale(1.01);
+    }
+    100% {
+        background-color: rgba(0, 255, 136, 0.2);
+        transform: scale(1);
+    }
+}

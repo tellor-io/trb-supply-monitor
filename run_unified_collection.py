@@ -43,6 +43,7 @@ import csv
 import argparse
 import logging
 import signal
+import sqlite3
 import time
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
@@ -774,6 +775,90 @@ def show_summary(collector: UnifiedDataCollector):
     
     print("=" * 60)
 
+def run_remove_and_rerun_range(collector: 'UnifiedDataCollector', args):
+    """Remove and rerun collection for a range of Tellor Layer block heights."""
+    start_block, end_block = args.remove_and_rerun
+    
+    if start_block > end_block:
+        start_block, end_block = end_block, start_block  # Swap if order is incorrect
+    
+    logger.info(f"Scanning for data between Tellor Layer blocks {start_block} and {end_block} (inclusive)")
+    
+    # Query database for snapshots in the range
+    with sqlite3.connect(collector.db.db_path) as conn:
+        cursor = conn.execute('''
+            SELECT DISTINCT layer_block_height 
+            FROM unified_snapshots 
+            WHERE layer_block_height >= ? AND layer_block_height <= ?
+            AND layer_block_height IS NOT NULL
+            ORDER BY layer_block_height ASC
+        ''', (start_block, end_block))
+        
+        block_heights = [row[0] for row in cursor.fetchall()]
+    
+    if not block_heights:
+        logger.info(f"No data found for Tellor Layer blocks {start_block} to {end_block}")
+        return
+    
+    # Show what will be affected
+    print(f"\nFound data for {len(block_heights)} Tellor Layer block heights:")
+    for height in block_heights:
+        print(f"  - Block {height}")
+    
+    print(f"\nThis will remove and re-collect data for {len(block_heights)} block heights.")
+    print("This operation cannot be undone.\n")
+    
+    # Ask for confirmation
+    try:
+        confirmation = input("Press Enter to continue, or Ctrl+C to cancel: ")
+    except KeyboardInterrupt:
+        print("\nOperation cancelled by user.")
+        return
+    
+    # Proceed with removal and rerun
+    logger.info(f"Starting remove and rerun for {len(block_heights)} block heights...")
+    
+    successful_count = 0
+    failed_count = 0
+    
+    for i, height in enumerate(block_heights, 1):
+        logger.info(f"Processing block height {height} ({i}/{len(block_heights)})")
+        
+        try:
+            if collector.remove_and_rerun_layer_block(height):
+                successful_count += 1
+                logger.info(f"Successfully processed block height {height}")
+            else:
+                failed_count += 1
+                logger.error(f"Failed to process block height {height}")
+        except Exception as e:
+            failed_count += 1
+            logger.error(f"Error processing block height {height}: {e}")
+        
+        # Add a small delay between operations to avoid overwhelming the system
+        if i < len(block_heights):
+            time.sleep(1)
+    
+    logger.info(f"Remove and rerun completed: {successful_count} successful, {failed_count} failed")
+    print(f"\nOperation completed: {successful_count} successful, {failed_count} failed")
+
+def run_remove_range(collector: 'UnifiedDataCollector', args):
+    """Remove data for a range of Tellor Layer block heights."""
+    try:
+        start_block, end_block = collector.parse_layer_block_range(args.remove_range)
+        logger.info(f"Removing data for Tellor Layer block range {start_block}-{end_block}")
+        
+        success = collector.remove_data_by_layer_block_range(start_block, end_block)
+        if success:
+            logger.info(f"Successfully removed data for layer block range {start_block}-{end_block}")
+        else:
+            logger.error(f"Failed to remove data for layer block range {start_block}-{end_block}")
+            
+    except ValueError as e:
+        logger.error(f"Invalid range format: {e}")
+        sys.exit(1)
+
+
 def main():
     """Main function."""
     parser = argparse.ArgumentParser(
@@ -808,6 +893,10 @@ def main():
                            help='Collect data at specific Ethereum block height')
     mode_group.add_argument('--layer-block', type=int, metavar='BLOCK_HEIGHT',
                            help='Collect data at specific Tellor Layer block height')
+    mode_group.add_argument('--remove-and-rerun', type=int, nargs=2, metavar=('START_BLOCK', 'END_BLOCK'),
+                           help='Remove and rerun collection for Tellor Layer block range (inclusive)')
+    mode_group.add_argument('--remove-range', type=str, metavar='RANGE',
+                           help='Remove data for range of Tellor Layer blocks (format: start-end, e.g., 1554392-1791109)')
     
     # Monitoring parameters
     parser.add_argument('--interval', type=int, default=3600,
@@ -856,6 +945,10 @@ def main():
             run_specific_block_collection(collector, args)
         elif args.layer_block:
             run_specific_block_collection(collector, args)
+        elif args.remove_and_rerun:
+            run_remove_and_rerun_range(collector, args)
+        elif args.remove_range:
+            run_remove_range(collector, args)
         else:
             run_single_collection(collector, args)
             

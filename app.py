@@ -24,9 +24,10 @@ from pathlib import Path
 from typing import Optional
 
 import uvicorn
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import HTMLResponse, FileResponse
+from fastapi.templating import Jinja2Templates
 
 # Local imports
 from src.tellor_supply_analytics.database import BalancesDatabase
@@ -48,6 +49,7 @@ app_shutdown = False
 collection_thread = None
 collection_service = None
 collection_interval = None
+root_path = ""  # Global variable to store the root path
 
 
 class BalanceCollectionService:
@@ -122,6 +124,9 @@ app = FastAPI(
 # Initialize database
 db = BalancesDatabase()
 
+# Initialize Jinja2 templates
+templates = Jinja2Templates(directory="templates")
+
 # Mount static files
 try:
     app.mount("/static", StaticFiles(directory="static"), name="static")
@@ -132,11 +137,14 @@ except RuntimeError:
 
 
 @app.get("/", response_class=HTMLResponse)
-async def root():
+async def root(request: Request):
     """Serve the main dashboard HTML page."""
     html_file = Path("templates/dashboard.html")
     if html_file.exists():
-        return FileResponse("templates/dashboard.html")
+        return templates.TemplateResponse("dashboard.html", {
+            "request": request,
+            "root_path": request.scope.get("root_path", "")
+        })
     else:
         return HTMLResponse("""
         <html>
@@ -596,7 +604,7 @@ def run_collection_service(interval_seconds: int):
 
 def main():
     """Main entry point."""
-    global app_shutdown, collection_thread, collection_interval
+    global app_shutdown, collection_thread, collection_interval, root_path
     
     parser = argparse.ArgumentParser(description='Tellor Layer Balance Analytics Application')
     parser.add_argument(
@@ -627,12 +635,20 @@ def main():
         help='Port for the web server (default: 8000)'
     )
     parser.add_argument(
+        '--root-path',
+        default='supply',
+        help='Root path for the application when served behind a proxy (e.g., /supply)'
+    )
+    parser.add_argument(
         '--debug',
         action='store_true',
         help='Enable debug logging'
     )
     
     args = parser.parse_args()
+    
+    # Set the global root_path
+    root_path = args.root_path
     
     if args.debug:
         logging.getLogger().setLevel(logging.DEBUG)
@@ -692,7 +708,8 @@ def main():
             host=args.host,
             port=args.port,
             reload=False,
-            log_level="info" if not args.debug else "debug"
+            log_level="info" if not args.debug else "debug",
+            root_path=root_path
         )
     except Exception as e:
         logger.error(f"Failed to start web server: {e}")

@@ -5,9 +5,10 @@ FastAPI Backend for Tellor Layer Active Balances Dashboard
 This API provides endpoints for accessing balance data stored in SQLite database.
 """
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import HTMLResponse, FileResponse
+from fastapi.templating import Jinja2Templates
 from typing import List, Dict, Optional
 import logging
 import requests
@@ -220,16 +221,22 @@ async def startup_event():
 # Initialize database
 db = BalancesDatabase()
 
+# Initialize Jinja2 templates
+templates = Jinja2Templates(directory="templates")
+
 # Mount static files (CSS, JS)
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
 
 @app.get("/", response_class=HTMLResponse)
-async def root():
+async def root(request: Request):
     """Serve the main dashboard HTML page."""
     html_file = Path("templates/dashboard.html")
     if html_file.exists():
-        return FileResponse("templates/dashboard.html")
+        return templates.TemplateResponse("dashboard.html", {
+            "request": request,
+            "root_path": request.scope.get("root_path", "")
+        })
     else:
         return HTMLResponse("""
         <html>
@@ -614,6 +621,112 @@ async def trigger_unified_collection(
         raise HTTPException(status_code=500, detail="Unified collection failed")
 
 
+@app.get("/api/unified/layer-blocks")
+async def get_layer_blocks_in_database(
+    limit: int = Query(100, description="Number of layer blocks to return", ge=1, le=500)
+):
+    """Get list of Tellor Layer blocks that have data in the database."""
+    try:
+        from src.tellor_supply_analytics.unified_collector import UnifiedDataCollector
+        
+        collector = UnifiedDataCollector()
+        layer_blocks = collector.list_layer_blocks_in_database(limit=limit)
+        
+        return {
+            "layer_blocks": layer_blocks,
+            "count": len(layer_blocks),
+            "limit": limit
+        }
+        
+    except Exception as e:
+        logger.error(f"Error getting layer blocks: {e}")
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
+@app.delete("/api/unified/layer-block/{layer_block_height}")
+async def remove_layer_block_data(layer_block_height: int):
+    """Remove all data for a specific Tellor Layer block height."""
+    try:
+        from src.tellor_supply_analytics.unified_collector import UnifiedDataCollector
+        
+        collector = UnifiedDataCollector()
+        success = collector.remove_data_by_layer_block(layer_block_height)
+        
+        if success:
+            return {
+                "status": "success",
+                "message": f"Successfully removed data for Tellor Layer block {layer_block_height}",
+                "layer_block_height": layer_block_height
+            }
+        else:
+            raise HTTPException(
+                status_code=404, 
+                detail=f"No data found for Tellor Layer block {layer_block_height}"
+            )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error removing data for layer block {layer_block_height}: {e}")
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
+@app.post("/api/unified/layer-block/{layer_block_height}/rerun")
+async def rerun_layer_block_collection(layer_block_height: int):
+    """Re-collect data for a specific Tellor Layer block height."""
+    try:
+        from src.tellor_supply_analytics.unified_collector import UnifiedDataCollector
+        
+        collector = UnifiedDataCollector()
+        success = collector.rerun_collection_for_layer_block(layer_block_height)
+        
+        if success:
+            return {
+                "status": "success",
+                "message": f"Successfully re-collected data for Tellor Layer block {layer_block_height}",
+                "layer_block_height": layer_block_height
+            }
+        else:
+            raise HTTPException(
+                status_code=500, 
+                detail=f"Failed to re-collect data for Tellor Layer block {layer_block_height}"
+            )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error re-collecting data for layer block {layer_block_height}: {e}")
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
+@app.post("/api/unified/layer-block/{layer_block_height}/remove-and-rerun")
+async def remove_and_rerun_layer_block(layer_block_height: int):
+    """Remove existing data and re-collect for a specific Tellor Layer block height."""
+    try:
+        from src.tellor_supply_analytics.unified_collector import UnifiedDataCollector
+        
+        collector = UnifiedDataCollector()
+        success = collector.remove_and_rerun_layer_block(layer_block_height)
+        
+        if success:
+            return {
+                "status": "success",
+                "message": f"Successfully removed and re-collected data for Tellor Layer block {layer_block_height}",
+                "layer_block_height": layer_block_height
+            }
+        else:
+            raise HTTPException(
+                status_code=500, 
+                detail=f"Failed to remove and re-collect data for Tellor Layer block {layer_block_height}"
+            )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error removing and re-collecting data for layer block {layer_block_height}: {e}")
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
 @app.get("/api/status")
 async def get_api_status():
     """Get API and database status."""
@@ -658,6 +771,36 @@ async def get_api_status():
 
 if __name__ == "__main__":
     import uvicorn
+    import argparse
+    
+    # Parse command line arguments
+    parser = argparse.ArgumentParser(description='Tellor Layer Balance Analytics API')
+    parser.add_argument(
+        '--host',
+        default='0.0.0.0',
+        help='Host to bind the web server (default: 0.0.0.0)'
+    )
+    parser.add_argument(
+        '--port',
+        type=int,
+        default=8000,
+        help='Port for the web server (default: 8000)'
+    )
+    parser.add_argument(
+        '--root-path',
+        default='',
+        help='Root path for the application when served behind a proxy (e.g., /supply)'
+    )
+    parser.add_argument(
+        '--debug',
+        action='store_true',
+        help='Enable debug logging and reload'
+    )
+    
+    args = parser.parse_args()
+    
+    if args.debug:
+        logging.getLogger().setLevel(logging.DEBUG)
     
     # Create directories if they don't exist
     Path("templates").mkdir(exist_ok=True)
@@ -670,8 +813,9 @@ if __name__ == "__main__":
     logger.info("Starting Tellor Balance Analytics API")
     uvicorn.run(
         "api:app",
-        host="0.0.0.0",
-        port=8000,
-        reload=True,
-        log_level="info"
+        host=args.host,
+        port=args.port,
+        reload=args.debug,
+        log_level="debug" if args.debug else "info",
+        root_path=args.root_path
     ) 

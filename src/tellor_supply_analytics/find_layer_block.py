@@ -159,6 +159,15 @@ class TellorLayerBlockFinder:
         
         # Binary search
         while low <= high:
+            # *** CRITICAL FIX: Check for shutdown signal during binary search ***
+            try:
+                from run_unified_collection import shutdown_requested
+                if shutdown_requested:
+                    logger.info("Shutdown requested during block search, stopping...")
+                    return None
+            except ImportError:
+                pass  # shutdown_requested not available
+                
             mid = (low + high) // 2
             logger.debug(f"Checking block {mid} (range: {low} - {high})")
             

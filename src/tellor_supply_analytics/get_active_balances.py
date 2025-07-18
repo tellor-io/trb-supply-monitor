@@ -30,6 +30,13 @@ except ImportError:
 # Local imports
 from .database import BalancesDatabase
 
+# Import shutdown flag at the top of the file
+try:
+    from run_unified_collection import shutdown_requested
+except ImportError:
+    # Fallback if run_unified_collection is not available
+    shutdown_requested = False
+
 # Load environment variables
 load_dotenv()
 
@@ -58,10 +65,10 @@ if not TELLOR_LAYER_RPC_URL:
     logger.warning(f"TELLOR_LAYER_RPC_URL was None, using fallback: {TELLOR_LAYER_RPC_URL}")
 
 # Validate URLs
-if not LAYER_GRPC_URL.startswith(('http://', 'https://')):
-    raise ValueError(f"Invalid LAYER_GRPC_URL: {LAYER_GRPC_URL}")
-if not TELLOR_LAYER_RPC_URL.startswith(('http://', 'https://')):
-    raise ValueError(f"Invalid TELLOR_LAYER_RPC_URL: {TELLOR_LAYER_RPC_URL}")
+if not LAYER_GRPC_URL or not LAYER_GRPC_URL.startswith(('http://', 'https://')):
+    raise ValueError(f"Invalid LAYER_GRPC_URL? {LAYER_GRPC_URL}")
+if not TELLOR_LAYER_RPC_URL or not TELLOR_LAYER_RPC_URL.startswith(('http://', 'https://')):
+    raise ValueError(f"Invalid TELLOR_LAYER_RPC_URL? {TELLOR_LAYER_RPC_URL}")
 
 logger.info(f"Using Tellor Layer GRPC URL: {LAYER_GRPC_URL}")
 logger.info(f"Using Tellor Layer RPC URL: {TELLOR_LAYER_RPC_URL}")
@@ -102,6 +109,17 @@ class EnhancedActiveBalancesCollector:
         """
         self.csv_file = CSV_FILE
         self.use_csv = use_csv
+        
+        # Retry up to 3 times if URLs are None
+        retries = 3
+        while not LAYER_GRPC_URL and retries > 0:
+            logger.warning(f"LAYER_GRPC_URL is None, retrying in 10 seconds... ({retries} retries left)")
+            time.sleep(10)
+            retries -= 1
+            
+        if not LAYER_GRPC_URL:
+            raise ValueError("Failed to get LAYER_GRPC_URL after retries")
+            
         self.base_url = LAYER_GRPC_URL.rstrip('/')
         self.accounts_endpoint = f"{self.base_url}/cosmos/auth/v1beta1/accounts"
         self.balance_endpoint_template = f"{self.base_url}/cosmos/bank/v1beta1/balances/{{}}"
@@ -294,6 +312,11 @@ class EnhancedActiveBalancesCollector:
         addresses_with_balances = []
         
         for i, (address, account_type) in enumerate(addresses, 1):
+            # *** CRITICAL FIX: Check for shutdown signal during long-running balance collection ***
+            if shutdown_requested:
+                logger.info(f"Shutdown requested during balance collection at address {i}/{len(addresses)}, stopping...")
+                break
+                
             if i % 10 == 0:
                 logger.info(f"Processed {i}/{len(addresses)} addresses at height {height}...")
             
@@ -509,25 +532,40 @@ class EnhancedActiveBalancesCollector:
         
         return free_floating_trb
     
-    def collect_and_save_balances(self, addresses: List[Tuple[str, str]]):
+    def collect_and_save_balances(self, addresses: List[Tuple[str, str]], block_height: Optional[int] = None):
         """
         Collect balances for all addresses and save to both CSV and database.
         
         Args:
             addresses: List of tuples (address, account_type)
+            block_height: Optional block height to query at. If None, current height will be determined once and used.
         """
         logger.info(f"Fetching balances for {len(addresses)} addresses...")
+        
+        # Get current block height if not provided
+        if block_height is None:
+            block_height = self.get_current_height()
+            if block_height is None:
+                logger.error("Failed to get current block height")
+                return
+            
+        logger.info(f"Using block height {block_height} for all queries")
         
         timestamp = datetime.now(timezone.utc).isoformat()
         addresses_with_balances = []
         
-        # Collect all balances
+        # Collect all balances at the specified height
         for i, (address, account_type) in enumerate(addresses, 1):
+            # *** CRITICAL FIX: Check for shutdown signal during long-running balance collection ***
+            if shutdown_requested:
+                logger.info(f"Shutdown requested during balance collection at address {i}/{len(addresses)}, stopping...")
+                break
+                
             if i % 10 == 0:
                 logger.info(f"Processed {i}/{len(addresses)} addresses...")
             
-            # Get balance for this address
-            loya_balance, loya_balance_trb = self.get_address_balance(address)
+            # Get balance for this address at the specified height
+            loya_balance, loya_balance_trb = self.get_address_balance(address, block_height)
             
             addresses_with_balances.append((address, account_type, loya_balance, loya_balance_trb))
             
@@ -536,12 +574,6 @@ class EnhancedActiveBalancesCollector:
         
         # Collect additional data
         logger.info("Collecting additional blockchain data...")
-        
-        # Get current block height
-        current_height = self.get_current_height()
-        if current_height is None:
-            logger.warning("Failed to get current block height, using 0")
-            current_height = 0
         
         # Get bridge balance
         bridge_balance = self.get_bridge_balance()
@@ -555,7 +587,7 @@ class EnhancedActiveBalancesCollector:
         self.db.save_snapshot(
             addresses_with_balances, 
             bridge_balance_trb=bridge_balance,
-            layer_block_height=current_height,
+            layer_block_height=block_height,
             free_floating_trb=free_floating_trb
         )
         logger.info(f"Saved {len(addresses_with_balances)} addresses to database with additional data")
@@ -608,6 +640,14 @@ class EnhancedActiveBalancesCollector:
         logger.info("Starting Enhanced Active Balances Collection")
         
         try:
+            # Get current block height first
+            current_height = self.get_current_height()
+            if current_height is None:
+                logger.error("Failed to get current block height")
+                return False
+                
+            logger.info(f"Using block height {current_height} for collection")
+            
             # Get all accounts
             accounts = self.get_all_accounts()
             if not accounts:
@@ -620,8 +660,8 @@ class EnhancedActiveBalancesCollector:
                 logger.error("No addresses found")
                 return False
             
-            # Collect and save balances
-            self.collect_and_save_balances(addresses)
+            # Collect and save balances at the specified height
+            self.collect_and_save_balances(addresses, block_height=current_height)
             
             # Print summary
             summary = self.get_latest_summary()
