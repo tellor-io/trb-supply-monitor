@@ -636,7 +636,7 @@ def main():
     )
     parser.add_argument(
         '--root-path',
-        default='',
+        default='supply',
         help='Root path for the application when served behind a proxy (e.g., /supply)'
     )
     parser.add_argument(
