@@ -842,6 +842,22 @@ def run_remove_and_rerun_range(collector: 'UnifiedDataCollector', args):
     logger.info(f"Remove and rerun completed: {successful_count} successful, {failed_count} failed")
     print(f"\nOperation completed: {successful_count} successful, {failed_count} failed")
 
+def run_remove_range(collector: 'UnifiedDataCollector', args):
+    """Remove data for a range of Tellor Layer block heights."""
+    try:
+        start_block, end_block = collector.parse_layer_block_range(args.remove_range)
+        logger.info(f"Removing data for Tellor Layer block range {start_block}-{end_block}")
+        
+        success = collector.remove_data_by_layer_block_range(start_block, end_block)
+        if success:
+            logger.info(f"Successfully removed data for layer block range {start_block}-{end_block}")
+        else:
+            logger.error(f"Failed to remove data for layer block range {start_block}-{end_block}")
+            
+    except ValueError as e:
+        logger.error(f"Invalid range format: {e}")
+        sys.exit(1)
+
 
 def main():
     """Main function."""
@@ -879,6 +895,8 @@ def main():
                            help='Collect data at specific Tellor Layer block height')
     mode_group.add_argument('--remove-and-rerun', type=int, nargs=2, metavar=('START_BLOCK', 'END_BLOCK'),
                            help='Remove and rerun collection for Tellor Layer block range (inclusive)')
+    mode_group.add_argument('--remove-range', type=str, metavar='RANGE',
+                           help='Remove data for range of Tellor Layer blocks (format: start-end, e.g., 1554392-1791109)')
     
     # Monitoring parameters
     parser.add_argument('--interval', type=int, default=3600,
@@ -929,6 +947,8 @@ def main():
             run_specific_block_collection(collector, args)
         elif args.remove_and_rerun:
             run_remove_and_rerun_range(collector, args)
+        elif args.remove_range:
+            run_remove_range(collector, args)
         else:
             run_single_collection(collector, args)
             

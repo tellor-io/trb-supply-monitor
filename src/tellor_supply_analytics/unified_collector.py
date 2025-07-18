@@ -1059,6 +1059,130 @@ class UnifiedDataCollector:
             logger.error(f"Error listing layer blocks in database: {e}")
             return []
 
+    def remove_data_by_layer_block_range(self, start_block: int, end_block: int, confirm: bool = True) -> bool:
+        """
+        Remove all data for Tellor Layer blocks within a specified range.
+        
+        Args:
+            start_block: Starting Tellor Layer block height (inclusive)
+            end_block: Ending Tellor Layer block height (inclusive)
+            confirm: Whether to ask for user confirmation before deletion
+            
+        Returns:
+            True if data was removed successfully, False otherwise
+        """
+        logger.info(f"Finding snapshots for Tellor Layer block range {start_block}-{end_block}")
+        
+        try:
+            # Query database directly for snapshots in the range (bypassing the limit in get_unified_snapshots)
+            import sqlite3
+            
+            snapshots_to_remove = []
+            with sqlite3.connect(self.db.db_path) as conn:
+                cursor = conn.execute('''
+                    SELECT * FROM unified_snapshots 
+                    WHERE layer_block_height >= ? AND layer_block_height <= ?
+                    AND layer_block_height IS NOT NULL
+                    ORDER BY layer_block_height ASC
+                ''', (start_block, end_block))
+                
+                columns = [desc[0] for desc in cursor.description]
+                snapshots_to_remove = [dict(zip(columns, row)) for row in cursor.fetchall()]
+            
+            if not snapshots_to_remove:
+                logger.info(f"No snapshots found for Tellor Layer block range {start_block}-{end_block}")
+                return True
+            
+            # Sort by layer block height for better display
+            snapshots_to_remove.sort(key=lambda x: x.get('layer_block_height', 0))
+            
+            # Display snapshots that will be removed
+            print(f"\n=== SNAPSHOTS TO BE REMOVED FOR LAYER BLOCK RANGE {start_block}-{end_block} ===")
+            print(f"Found {len(snapshots_to_remove)} snapshots to remove:")
+            print(f"{'Snapshot ID':<12} {'Layer Height':<15} {'Layer Timestamp':<15} {'ETH Block':<12} {'ETH Timestamp':<15} {'Completeness':<12}")
+            print("-" * 105)
+            
+            for snapshot in snapshots_to_remove:
+                layer_dt = datetime.fromtimestamp(snapshot.get('layer_block_timestamp', 0)).strftime('%Y-%m-%d %H:%M') if snapshot.get('layer_block_timestamp') else "N/A"
+                eth_dt = datetime.fromtimestamp(snapshot.get('eth_block_timestamp', 0)).strftime('%Y-%m-%d %H:%M') if snapshot.get('eth_block_timestamp') else "N/A"
+                
+                print(f"{snapshot.get('id', 'N/A'):<12} "
+                      f"{snapshot.get('layer_block_height', 'N/A'):<15} "
+                      f"{layer_dt:<15} "
+                      f"{snapshot.get('eth_block_number', 'N/A'):<12} "
+                      f"{eth_dt:<15} "
+                      f"{snapshot.get('data_completeness_score', 0):<12.2f}")
+            
+            print(f"\nTotal snapshots to remove: {len(snapshots_to_remove)}")
+            
+            # Ask for confirmation if required
+            if confirm:
+                response = input(f"\nAre you sure you want to remove these {len(snapshots_to_remove)} snapshots? (y/N): ").strip().lower()
+                if response not in ['y', 'yes']:
+                    logger.info("Operation cancelled by user")
+                    return False
+            
+            # Remove the snapshots
+            logger.info(f"Removing {len(snapshots_to_remove)} snapshots...")
+            removed_count = 0
+            
+            for snapshot in snapshots_to_remove:
+                snapshot_id = snapshot.get('id')
+                layer_height = snapshot.get('layer_block_height')
+                
+                if snapshot_id and self.db.delete_unified_snapshot(snapshot_id):
+                    removed_count += 1
+                    if removed_count % 10 == 0:
+                        logger.info(f"Removed {removed_count}/{len(snapshots_to_remove)} snapshots...")
+                else:
+                    logger.warning(f"Failed to remove snapshot {snapshot_id} for layer block {layer_height}")
+            
+            if removed_count > 0:
+                logger.info(f"Successfully removed {removed_count} snapshots for layer block range {start_block}-{end_block}")
+                return True
+            else:
+                logger.error(f"Failed to remove any snapshots for layer block range {start_block}-{end_block}")
+                return False
+                
+        except Exception as e:
+            logger.error(f"Error removing data for layer block range {start_block}-{end_block}: {e}")
+            return False
+
+    def parse_layer_block_range(self, range_str: str) -> Tuple[int, int]:
+        """
+        Parse a layer block range string in format "start-end".
+        
+        Args:
+            range_str: Range string like "1554392-1791109"
+            
+        Returns:
+            Tuple of (start_block, end_block)
+            
+        Raises:
+            ValueError: If the range format is invalid
+        """
+        try:
+            if '-' not in range_str:
+                raise ValueError("Range must contain a hyphen (-)")
+            
+            parts = range_str.split('-')
+            if len(parts) != 2:
+                raise ValueError("Range must be in format 'start-end'")
+            
+            start_block = int(parts[0].strip())
+            end_block = int(parts[1].strip())
+            
+            if start_block < 0 or end_block < 0:
+                raise ValueError("Block numbers must be positive")
+            
+            if start_block > end_block:
+                raise ValueError("Start block must be less than or equal to end block")
+            
+            return start_block, end_block
+            
+        except ValueError as e:
+            raise ValueError(f"Invalid range format '{range_str}': {e}")
+
 
 def main():
     """Main function for running unified data collection."""
@@ -1086,6 +1210,7 @@ def main():
     parser.add_argument('--remove-layer-block', type=int, help='Remove data for specific Tellor Layer block height')
     parser.add_argument('--rerun-layer-block', type=int, help='Re-collect data for specific Tellor Layer block height')
     parser.add_argument('--remove-and-rerun', type=int, help='Remove and re-collect data for specific Tellor Layer block height')
+    parser.add_argument('--remove-range', type=str, help='Remove data for range of Tellor Layer blocks (format: start-end, e.g., 1554392-1791109)')
     parser.add_argument('--list-layer-blocks', action='store_true', help='List Tellor Layer blocks in database')
     parser.add_argument('--list-limit', type=int, default=50, help='Limit for listing layer blocks')
     parser.add_argument('--db-path', default='tellor_balances.db', help='Database file path')
@@ -1123,6 +1248,20 @@ def main():
                           f"{block['data_completeness_score']:<12.2f} {block['collection_time'] or 'N/A'}")
             else:
                 print("No Tellor Layer blocks found in database")
+            return
+        
+        if args.remove_range:
+            try:
+                start_block, end_block = collector.parse_layer_block_range(args.remove_range)
+                logger.info(f"Removing data for Tellor Layer block range {start_block}-{end_block}")
+                success = collector.remove_data_by_layer_block_range(start_block, end_block)
+                if success:
+                    logger.info(f"Successfully removed data for layer block range {start_block}-{end_block}")
+                else:
+                    logger.error(f"Failed to remove data for layer block range {start_block}-{end_block}")
+            except ValueError as e:
+                logger.error(f"Invalid range format: {e}")
+                sys.exit(1)
             return
         
         if args.remove_layer_block:
