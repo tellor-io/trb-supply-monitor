@@ -211,8 +211,8 @@ def main():
         logger.info("Next steps:")
         logger.info("1. Run: python run_unified_collection.py --summary")
         logger.info("2. Start monitoring: python run_unified_collection.py --monitor")
-        logger.info("3. View API docs: http://localhost:8000/docs")
-        logger.info("4. Test API: curl http://localhost:8000/api/unified/summary")
+        logger.info("3. View API docs: http://localhost:8001/docs")
+        logger.info("4. Test API: curl http://localhost:8001/api/unified/summary")
     else:
         logger.info("⚠️  Some tests failed. Check the errors above.")
         return 1

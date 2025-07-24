@@ -156,7 +156,7 @@ async def root(request: Request):
                 <h2>Quick Start:</h2>
                 <ol>
                     <li>Ensure all files are in place (run setup.sh if needed)</li>
-                    <li>Trigger a collection: <code>curl -X POST http://localhost:8000/api/collect</code></li>
+                    <li>Trigger a collection: <code>curl -X POST http://localhost:8001/api/collect</code></li>
                     <li>Refresh this page to see the dashboard</li>
                 </ol>
             </body>
@@ -631,8 +631,8 @@ def main():
     parser.add_argument(
         '--port',
         type=int,
-        default=8000,
-        help='Port for the web server (default: 8000)'
+        default=8001,
+        help='Port for the web server (default: 8001)'
     )
     parser.add_argument(
         '--root-path',
