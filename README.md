@@ -112,23 +112,12 @@ python run_supply_analytics.py --historical
 
 ### Monitoring Mode
 
-Run continuous data collection at set intervals:
+Run continuous data collections every 3600 seconds:
 
 ```bash
 # Using uv run (recommended)
-uv run tellor-supply-analytics --monitor
+uv run python run_unified_collections.py --monitor 3600
 
-# Or with activated environment
-tellor-supply-analytics --monitor
-```
-
-Or using the runner script:
-
-```bash
-python run_supply_analytics.py --monitor
-```
-
-**Note**: The monitoring interval can be configured with the `CURRENT_DATA_INTERVAL` environment variable (default: 300 seconds = 5 minutes).
 
 ### Discord Alerts
 

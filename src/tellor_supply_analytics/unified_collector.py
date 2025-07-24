@@ -1118,6 +1118,64 @@ class UnifiedDataCollector:
             logger.error(f"Error listing layer blocks in database: {e}")
             return []
 
+    def find_largest_gap_in_layer_blocks(self) -> Optional[int]:
+        """
+        Find the largest gap in Tellor Layer block numbers and return the block number
+        in the middle of that gap for collection.
+        
+        Returns:
+            Block height in the middle of the largest gap, or None if no gaps found
+        """
+        try:
+            # Get all layer block heights from the database (no limit for complete analysis)
+            import sqlite3
+            layer_heights = []
+            
+            with sqlite3.connect(self.db.db_path) as conn:
+                cursor = conn.execute('''
+                    SELECT DISTINCT layer_block_height 
+                    FROM unified_snapshots 
+                    WHERE layer_block_height IS NOT NULL
+                    ORDER BY layer_block_height ASC
+                ''')
+                layer_heights = [row[0] for row in cursor.fetchall()]
+            
+            if len(layer_heights) < 2:
+                logger.info("Not enough layer blocks in database to find gaps")
+                return None
+            
+            # Find gaps between consecutive blocks
+            gaps = []
+            for i in range(len(layer_heights) - 1):
+                current_height = layer_heights[i]
+                next_height = layer_heights[i + 1]
+                gap_size = next_height - current_height - 1
+                
+                if gap_size > 0:  # There's a gap
+                    gaps.append({
+                        'start_height': current_height,
+                        'end_height': next_height,
+                        'gap_size': gap_size,
+                        'middle_height': current_height + (gap_size + 1) // 2
+                    })
+            
+            if not gaps:
+                logger.info("No gaps found in Tellor Layer block coverage")
+                return None
+            
+            # Find the largest gap
+            largest_gap = max(gaps, key=lambda x: x['gap_size'])
+            
+            logger.info(f"Found largest gap: {largest_gap['gap_size']} blocks between "
+                       f"{largest_gap['start_height']} and {largest_gap['end_height']}")
+            logger.info(f"Target block for gap collection: {largest_gap['middle_height']}")
+            
+            return largest_gap['middle_height']
+            
+        except Exception as e:
+            logger.error(f"Error finding largest gap in layer blocks: {e}")
+            return None
+
     def remove_data_by_layer_block_range(self, start_block: int, end_block: int, confirm: bool = True) -> bool:
         """
         Remove all data for Tellor Layer blocks within a specified range.
