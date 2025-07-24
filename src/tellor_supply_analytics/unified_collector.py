@@ -456,6 +456,58 @@ class UnifiedDataCollector:
             logger.error(f"Error finding corresponding layer data for ETH timestamp {eth_timestamp}: {e}")
             return None
     
+    def get_total_reporter_power(self, layer_height: int) -> Optional[int]:
+        """
+        Get the total reporter power at a specific Tellor Layer block height.
+        
+        Args:
+            layer_height: Tellor Layer block height
+            
+        Returns:
+            Total reporter power (sum of all reporter power values) or None if failed
+        """
+        logger.info(f"Getting total reporter power for Tellor Layer block height {layer_height}")
+        
+        try:
+            # Use the supply collector's layerd command runner to query reporters
+            cmd_args = [
+                'query', 'reporter', 'reporters',
+                '--height', str(layer_height),
+                '--output', 'json',
+                '--node', os.getenv('TELLOR_LAYER_RPC_URL', 'http://localhost:26658')
+            ]
+            
+            result = self.supply_collector.run_layerd_command(cmd_args)
+            if not result:
+                logger.warning(f"Failed to get reporter data for height {layer_height}")
+                return None
+            
+            # Parse the JSON response and sum up all reporter power
+            total_power = 0
+            reporters = result.get('reporters', [])
+            
+            if not reporters:
+                logger.info(f"No reporters found at height {layer_height}")
+                return 0
+            
+            for reporter in reporters:
+                power = reporter.get('power', 0)
+                if isinstance(power, str):
+                    # Convert string to int if needed
+                    try:
+                        power = int(power)
+                    except ValueError:
+                        logger.warning(f"Invalid power value for reporter: {power}")
+                        power = 0
+                total_power += power
+            
+            logger.info(f"Found {len(reporters)} reporters with total power {total_power} at height {layer_height}")
+            return total_power
+            
+        except Exception as e:
+            logger.error(f"Error getting total reporter power for height {layer_height}: {e}")
+            return None
+
     def collect_historical_layer_data(self, layer_height: int, layer_timestamp: int, eth_timestamp: int) -> Optional[Dict]:
         """
         Collect historical Tellor Layer supply data for a specific block height.
@@ -490,6 +542,12 @@ class UnifiedDataCollector:
             # Calculate free floating TRB
             free_floating_trb = layer_supply_trb - not_bonded_tokens - bonded_tokens
             
+            # Get total reporter power at the specific height
+            total_reporter_power = self.get_total_reporter_power(layer_height)
+            if total_reporter_power is None:
+                logger.warning(f"Failed to get reporter power for height {layer_height}, using 0")
+                total_reporter_power = 0
+            
             # Find the corresponding Ethereum block number for this timestamp
             eth_block_number = self.find_ethereum_block_for_timestamp(eth_timestamp)
             if eth_block_number is None:
@@ -506,6 +564,7 @@ class UnifiedDataCollector:
                 'layer_total_supply_trb': layer_supply_trb,
                 'not_bonded_tokens': not_bonded_tokens,
                 'bonded_tokens': bonded_tokens,
+                'total_reporter_power': total_reporter_power,
                 'free_floating_trb': free_floating_trb
             }
             
@@ -1319,4 +1378,4 @@ def main():
 
 
 if __name__ == '__main__':
-    main() 
+    main()

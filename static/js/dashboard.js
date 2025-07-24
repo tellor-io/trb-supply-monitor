@@ -74,7 +74,7 @@ class HistoricalDashboard {
         if (!data.timeline || data.timeline.length === 0) {
             tbody.innerHTML = `
                 <tr>
-                    <td colspan="10" class="text-center text-muted">
+                    <td colspan="11" class="text-center text-muted">
                         No historical data available for the selected time range.
                         <br><small>Try triggering a collection or selecting a different time range.</small>
                     </td>
@@ -119,6 +119,9 @@ class HistoricalDashboard {
                     </td>
                     <td class="font-mono text-sm">
                         ${this.formatTRB(snapshot.not_bonded_tokens)}
+                    </td>
+                    <td class="font-mono text-purple">
+                        ${this.formatNumber(snapshot.total_reporter_power) || '0'}
                     </td>
                     <td class="font-mono">
                         ${this.formatNumber(snapshot.total_addresses) || 'N/A'}
@@ -544,10 +547,45 @@ class HistoricalDashboard {
                         pointRadius: 2,
                         pointHoverRadius: 6,
                         yAxisID: 'y'
+                    },
+                    {
+                        label: 'Total Reporter Power',
+                        data: sortedTimeline.map(d => d.total_reporter_power || 0),
+                        borderColor: '#9370db',
+                        backgroundColor: 'rgba(147, 112, 219, 0.1)',
+                        fill: false,
+                        tension: 0.1,
+                        pointRadius: 2,
+                        pointHoverRadius: 6,
+                        yAxisID: 'y1'
                     }
                 ]
             },
-            options: this.getChartOptions('Bridge & Staking Metrics', 'TRB Amount')
+            options: {
+                ...this.getChartOptions('Bridge & Staking Metrics', 'TRB Amount'),
+                scales: {
+                    ...this.getChartOptions('Bridge & Staking Metrics', 'TRB Amount').scales,
+                    y1: {
+                        type: 'linear',
+                        display: true,
+                        position: 'right',
+                        title: {
+                            display: true,
+                            text: 'Reporter Power',
+                            color: '#a0a0a0'
+                        },
+                        ticks: {
+                            color: '#a0a0a0',
+                            callback: function(value) {
+                                return value.toLocaleString();
+                            }
+                        },
+                        grid: {
+                            drawOnChartArea: false,
+                        },
+                    }
+                }
+            }
         });
         
         // Active Balances Chart
@@ -722,6 +760,8 @@ class HistoricalDashboard {
                             const value = context.parsed.y;
                             if (label.includes('Balance') || label.includes('TRB') || label.includes('Tokens')) {
                                 return `${label}: ${value.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 6})} TRB`;
+                            } else if (label.includes('Reporter Power')) {
+                                return `${label}: ${value.toLocaleString()}`;
                             } else {
                                 return `${label}: ${value.toLocaleString()}`;
                             }

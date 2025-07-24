@@ -470,6 +470,7 @@ async def get_unified_timeline(
                 'layer_total_supply_trb': snapshot.get('layer_total_supply_trb', 0),
                 'bonded_tokens': snapshot.get('bonded_tokens', 0),
                 'not_bonded_tokens': snapshot.get('not_bonded_tokens', 0),
+                'total_reporter_power': snapshot.get('total_reporter_power', 0),
                 'free_floating_trb': snapshot.get('free_floating_trb', 0),
                 'total_addresses': snapshot.get('total_addresses', 0),
                 'addresses_with_balance': snapshot.get('addresses_with_balance', 0),

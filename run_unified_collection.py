@@ -858,6 +858,82 @@ def run_remove_range(collector: 'UnifiedDataCollector', args):
         logger.error(f"Invalid range format: {e}")
         sys.exit(1)
 
+def run_update_reporter_power(collector: 'UnifiedDataCollector', args):
+    """Update total reporter power for all existing unified snapshots retroactively."""
+    logger.info("Starting retroactive update of total reporter power for all unified snapshots")
+    
+    try:
+        # Get all unified snapshots that have layer block height but missing reporter power
+        import sqlite3
+        
+        snapshots_to_update = []
+        with sqlite3.connect(collector.db.db_path) as conn:
+            cursor = conn.execute('''
+                SELECT id, layer_block_height, eth_block_timestamp, total_reporter_power
+                FROM unified_snapshots 
+                WHERE layer_block_height IS NOT NULL 
+                AND (total_reporter_power IS NULL OR total_reporter_power = 0)
+                ORDER BY layer_block_height ASC
+            ''')
+            
+            columns = [desc[0] for desc in cursor.description]
+            snapshots_to_update = [dict(zip(columns, row)) for row in cursor.fetchall()]
+        
+        if not snapshots_to_update:
+            logger.info("No snapshots found that need reporter power updates")
+            return
+        
+        logger.info(f"Found {len(snapshots_to_update)} snapshots that need reporter power updates")
+        
+        successful_updates = 0
+        failed_updates = 0
+        
+        for i, snapshot in enumerate(snapshots_to_update, 1):
+            if shutdown_requested:
+                logger.info("Shutdown requested, stopping reporter power updates...")
+                break
+                
+            layer_height = snapshot['layer_block_height']
+            eth_timestamp = snapshot['eth_block_timestamp']
+            snapshot_id = snapshot['id']
+            
+            logger.info(f"Processing snapshot {i}/{len(snapshots_to_update)}: "
+                       f"Layer height {layer_height} (snapshot ID {snapshot_id})")
+            
+            try:
+                # Get total reporter power for this layer height
+                total_reporter_power = collector.get_total_reporter_power(layer_height)
+                
+                if total_reporter_power is not None:
+                    # Update the snapshot with the reporter power
+                    update_data = {'total_reporter_power': total_reporter_power}
+                    success = collector.db.update_unified_snapshot_data(eth_timestamp, update_data)
+                    
+                    if success:
+                        successful_updates += 1
+                        logger.info(f"Updated snapshot {snapshot_id} with reporter power {total_reporter_power}")
+                    else:
+                        failed_updates += 1
+                        logger.error(f"Failed to update snapshot {snapshot_id} in database")
+                else:
+                    failed_updates += 1
+                    logger.error(f"Failed to get reporter power for layer height {layer_height}")
+                
+                # Add small delay to avoid overwhelming the RPC
+                time.sleep(0.5)
+                
+            except Exception as e:
+                failed_updates += 1
+                logger.error(f"Error updating snapshot {snapshot_id}: {e}")
+                continue
+        
+        logger.info(f"Retroactive reporter power update completed: "
+                   f"{successful_updates} successful, {failed_updates} failed")
+        
+    except Exception as e:
+        logger.error(f"Error during retroactive reporter power update: {e}")
+        sys.exit(1)
+
 
 def main():
     """Main function."""
@@ -897,6 +973,8 @@ def main():
                            help='Remove and rerun collection for Tellor Layer block range (inclusive)')
     mode_group.add_argument('--remove-range', type=str, metavar='RANGE',
                            help='Remove data for range of Tellor Layer blocks (format: start-end, e.g., 1554392-1791109)')
+    mode_group.add_argument('--update-reporter-power', action='store_true',
+                           help='Update total reporter power for all existing unified snapshots retroactively')
     
     # Monitoring parameters
     parser.add_argument('--interval', type=int, default=3600,
@@ -949,6 +1027,8 @@ def main():
             run_remove_and_rerun_range(collector, args)
         elif args.remove_range:
             run_remove_range(collector, args)
+        elif args.update_reporter_power:
+            run_update_reporter_power(collector, args)
         else:
             run_single_collection(collector, args)
             
