@@ -535,7 +535,7 @@ class HistoricalDashboard {
                         tension: 0.1,
                         pointRadius: 2,
                         pointHoverRadius: 6,
-                        yAxisID: 'y'
+                        yAxisID: 'y1'
                     },
                     {
                         label: 'Not Bonded Tokens',
@@ -546,7 +546,7 @@ class HistoricalDashboard {
                         tension: 0.1,
                         pointRadius: 2,
                         pointHoverRadius: 6,
-                        yAxisID: 'y'
+                        yAxisID: 'y1'
                     },
                     {
                         label: 'Total Reporter Power',
@@ -571,7 +571,7 @@ class HistoricalDashboard {
                         position: 'right',
                         title: {
                             display: true,
-                            text: 'Reporter Power',
+                            text: 'Tokens / Reporter Power',
                             color: '#a0a0a0'
                         },
                         ticks: {
@@ -758,7 +758,7 @@ class HistoricalDashboard {
                         label: function(context) {
                             const label = context.dataset.label || '';
                             const value = context.parsed.y;
-                            if (label.includes('Balance') || label.includes('TRB') || label.includes('Tokens')) {
+                            if (label.includes('Balance') || label.includes('TRB') || label.includes('Bonded Tokens') || label.includes('Not Bonded Tokens')) {
                                 return `${label}: ${value.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 6})} TRB`;
                             } else if (label.includes('Reporter Power')) {
                                 return `${label}: ${value.toLocaleString()}`;
