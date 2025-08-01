@@ -156,7 +156,7 @@ async def root(request: Request):
                 <h2>Quick Start:</h2>
                 <ol>
                     <li>Ensure all files are in place (run setup.sh if needed)</li>
-                    <li>Trigger a collection: <code>curl -X POST http://localhost:8000/api/collect</code></li>
+                    <li>Trigger a collection: <code>curl -X POST http://localhost:8001/api/collect</code></li>
                     <li>Refresh this page to see the dashboard</li>
                 </ol>
             </body>
@@ -470,6 +470,7 @@ async def get_unified_timeline(
                 'layer_total_supply_trb': snapshot.get('layer_total_supply_trb', 0),
                 'bonded_tokens': snapshot.get('bonded_tokens', 0),
                 'not_bonded_tokens': snapshot.get('not_bonded_tokens', 0),
+                'total_reporter_power': snapshot.get('total_reporter_power', 0),
                 'free_floating_trb': snapshot.get('free_floating_trb', 0),
                 'total_addresses': snapshot.get('total_addresses', 0),
                 'addresses_with_balance': snapshot.get('addresses_with_balance', 0),
@@ -631,8 +632,8 @@ def main():
     parser.add_argument(
         '--port',
         type=int,
-        default=8000,
-        help='Port for the web server (default: 8000)'
+        default=8001,
+        help='Port for the web server (default: 8001)'
     )
     parser.add_argument(
         '--root-path',

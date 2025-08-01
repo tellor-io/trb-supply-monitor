@@ -24,7 +24,25 @@ class BalancesDatabase:
         """Initialize database connection and create tables if needed."""
         self.db_path = db_path
         self.init_database()
+        self.migrate_add_reporter_power_column()
     
+    def migrate_add_reporter_power_column(self):
+        """Add total_reporter_power column to existing unified_snapshots table if it doesn't exist."""
+        with sqlite3.connect(self.db_path) as conn:
+            # Check if the column already exists
+            cursor = conn.execute("PRAGMA table_info(unified_snapshots)")
+            columns = [row[1] for row in cursor.fetchall()]
+            
+            if 'total_reporter_power' not in columns:
+                logger.info("Adding total_reporter_power column to unified_snapshots table")
+                conn.execute('''
+                    ALTER TABLE unified_snapshots 
+                    ADD COLUMN total_reporter_power INTEGER DEFAULT 0
+                ''')
+                logger.info("Successfully added total_reporter_power column")
+            else:
+                logger.debug("total_reporter_power column already exists")
+
     def init_database(self):
         """Initialize database tables."""
         with sqlite3.connect(self.db_path) as conn:
@@ -113,6 +131,9 @@ class BalancesDatabase:
                     -- Staking Data
                     not_bonded_tokens REAL,
                     bonded_tokens REAL,
+                    
+                    -- Reporter Data
+                    total_reporter_power INTEGER DEFAULT 0,
                     
                     -- Balance Summary Data
                     total_addresses INTEGER DEFAULT 0,
@@ -522,10 +543,10 @@ class BalancesDatabase:
                 INSERT OR REPLACE INTO unified_snapshots 
                 (eth_block_number, eth_block_timestamp, eth_block_datetime, 
                  bridge_balance_trb, layer_block_height, layer_block_timestamp, layer_block_datetime,
-                 layer_total_supply_trb, not_bonded_tokens, bonded_tokens,
+                 layer_total_supply_trb, not_bonded_tokens, bonded_tokens, total_reporter_power,
                  total_addresses, addresses_with_balance, total_loya_balance, total_trb_balance, 
                  free_floating_trb, collection_time, data_completeness_score)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ''', (
                 eth_block_number,
                 eth_block_timestamp, 
@@ -537,6 +558,7 @@ class BalancesDatabase:
                 supply_data.get('layer_total_supply_trb') if supply_data else None,
                 supply_data.get('not_bonded_tokens') if supply_data else None,
                 supply_data.get('bonded_tokens') if supply_data else None,
+                supply_data.get('total_reporter_power') if supply_data else 0,
                 len(balance_data) if balance_data else 0,
                 sum(1 for _, _, loya, _ in balance_data if loya > 0) if balance_data else 0,
                 sum(loya for _, _, loya, _ in balance_data) if balance_data else 0,
@@ -677,8 +699,8 @@ class BalancesDatabase:
         for field, value in update_data.items():
             if field in ['bridge_balance_trb', 'layer_block_height', 'layer_block_timestamp',
                         'layer_total_supply_trb', 'not_bonded_tokens', 'bonded_tokens',
-                        'total_addresses', 'addresses_with_balance', 'total_loya_balance',
-                        'total_trb_balance', 'free_floating_trb']:
+                        'total_reporter_power', 'total_addresses', 'addresses_with_balance', 
+                        'total_loya_balance', 'total_trb_balance', 'free_floating_trb']:
                 set_clauses.append(f"{field} = ?")
                 values.append(value)
         

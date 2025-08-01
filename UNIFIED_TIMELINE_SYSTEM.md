@@ -79,25 +79,25 @@ python run_unified_collection.py --backfill --max-backfill 10
 #### Get Timeline Data for Charts
 ```bash
 # Get 24 hours of timeline data
-curl "http://localhost:8000/api/unified/timeline?hours_back=24"
+curl "http://localhost:8001/api/unified/timeline?hours_back=24"
 
 # Get only complete data (score >= 0.8)
-curl "http://localhost:8000/api/unified/timeline?hours_back=48&min_completeness=0.8"
+curl "http://localhost:8001/api/unified/timeline?hours_back=48&min_completeness=0.8"
 ```
 
 #### Get Specific Snapshot
 ```bash
 # Get data for specific Ethereum timestamp
-curl "http://localhost:8000/api/unified/snapshot/1703788800"
+curl "http://localhost:8001/api/unified/snapshot/1703788800"
 
 # Get balances for specific timestamp
-curl "http://localhost:8000/api/unified/balances/1703788800"
+curl "http://localhost:8001/api/unified/balances/1703788800"
 ```
 
 #### Trigger Collection
 ```bash
 # Trigger unified collection via API
-curl -X POST "http://localhost:8000/api/unified/collect?hours_back=6&max_blocks=20"
+curl -X POST "http://localhost:8001/api/unified/collect?hours_back=6&max_blocks=20"
 ```
 
 ## Data Collection Process
@@ -208,13 +208,13 @@ LAYER_GRPC_URL=https://node-palmito.tellorlayer.com
 
 ```bash
 # System status
-curl "http://localhost:8000/api/status"
+curl "http://localhost:8001/api/status"
 
 # Unified data summary
-curl "http://localhost:8000/api/unified/summary"
+curl "http://localhost:8001/api/unified/summary"
 
 # Incomplete snapshots (need backfill)
-curl "http://localhost:8000/api/unified/incomplete"
+curl "http://localhost:8001/api/unified/incomplete"
 ```
 
 ### Logs
@@ -339,10 +339,10 @@ python run_unified_collection.py --monitor --interval 3600
 
 ```bash
 # View available unified data
-curl "http://localhost:8000/api/unified/summary"
+curl "http://localhost:8001/api/unified/summary"
 
 # Get timeline data for frontend
-curl "http://localhost:8000/api/unified/timeline?hours_back=6"
+curl "http://localhost:8001/api/unified/timeline?hours_back=6"
 ```
 
 ### 4. Access Frontend

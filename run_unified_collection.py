@@ -10,7 +10,7 @@ Features:
 - Historical data backfill with automatic timeline discovery
 - Bridge activity-based collection using transaction CSV files
 - Data completeness tracking and incremental updates
-- Monitoring mode for continuous operation
+- Monitoring mode for continuous operation focused on current blocks and gap filling
 - Specific block height collection for targeted data snapshots
 
 Usage Examples:
@@ -33,8 +33,9 @@ Usage Examples:
     # Collect data at specific Tellor Layer block height
     python run_unified_collection.py --layer-block 5730721
 
-    # Run in continuous monitoring mode
-    python run_unified_collection.py --monitor --interval 3600
+    # Run in continuous monitoring mode (check every 1800 seconds)
+    # Each cycle: collect current layer block + fill largest gap
+    python run_unified_collection.py --monitor 1800
 """
 
 import os
@@ -577,9 +578,64 @@ def run_backfill(collector: UnifiedDataCollector, args):
     logger.info(f"Backfill completed: {updated} snapshots updated")
     return updated
 
+def run_specific_block_collection_for_layer(collector: UnifiedDataCollector, layer_block_height: int) -> bool:
+    """
+    Helper function to collect unified data for a specific Tellor Layer block height.
+    
+    Args:
+        collector: The UnifiedDataCollector instance
+        layer_block_height: Tellor Layer block height to collect data for
+        
+    Returns:
+        True if collection was successful, False otherwise
+    """
+    try:
+        # Get block info for the specified layer height
+        block_info = collector.supply_collector.get_block_info(layer_block_height)
+        if not block_info:
+            logger.error(f"Could not get block info for layer height {layer_block_height}")
+            return False
+        
+        block_time_str, layer_timestamp = block_info
+        logger.debug(f"Layer block {layer_block_height} timestamp: {layer_timestamp} ({block_time_str})")
+        
+        # Find the corresponding Ethereum block number for this timestamp
+        eth_block_number = collector.find_ethereum_block_for_timestamp(layer_timestamp)
+        if eth_block_number is None:
+            logger.warning(f"Could not find corresponding Ethereum block for layer timestamp {layer_timestamp}, using 0")
+            eth_block_number = 0
+        
+        # Check if we already have complete data for this timestamp
+        existing_snapshot = collector.db.get_unified_snapshot_by_eth_timestamp(layer_timestamp)
+        if existing_snapshot and existing_snapshot.get('data_completeness_score', 0) >= 1.0:
+            logger.info(f"Complete data already exists for layer block {layer_block_height}")
+            return True
+        
+        # Collect unified snapshot using the specific layer block height
+        success = collector.collect_unified_snapshot(
+            eth_block_number=eth_block_number,
+            eth_timestamp=layer_timestamp,
+            layer_block_height=layer_block_height
+        )
+        
+        return success
+        
+    except Exception as e:
+        logger.error(f"Error collecting data for layer block {layer_block_height}: {e}")
+        return False
+
 def run_monitoring_mode(collector: UnifiedDataCollector, args):
     """Run continuous monitoring mode."""
-    logger.info(f"Starting monitoring mode with {args.interval} second intervals")
+    check_period = args.monitor
+    if check_period is None:
+        logger.error("Monitoring period (--monitor) must be specified.")
+        sys.exit(1)
+    
+    if check_period <= 0:
+        logger.error(f"Monitoring period must be greater than 0, got: {check_period}")
+        sys.exit(1)
+
+    logger.info(f"Starting monitoring mode with {check_period} second check period")
     logger.info("Press Ctrl+C to stop gracefully")
     
     cycles_completed = 0
@@ -593,15 +649,44 @@ def run_monitoring_mode(collector: UnifiedDataCollector, args):
                 # Check for shutdown before each major operation
                 check_shutdown()
                 
-                # Run collection
-                processed = run_single_collection(collector, args)
+                # Step 1: Get current Tellor Layer block number
+                logger.info("Getting current Tellor Layer block number...")
+                current_layer_height = collector.supply_collector.get_current_height()
+                if current_layer_height is None:
+                    logger.error("Failed to get current Tellor Layer block height")
+                    raise Exception("Unable to get current layer height")
+                
+                logger.info(f"Current Tellor Layer block height: {current_layer_height}")
+                
+                # Step 2: Sleep for 10 seconds
+                logger.info("Sleeping for 10 seconds...")
+                time.sleep(10)
                 
                 check_shutdown()
                 
-                # Optionally run backfill periodically
-                if cycles_completed % 5 == 0:  # Every 5th cycle
-                    logger.info("Running periodic backfill...")
-                    updated = run_backfill(collector, args)
+                # Step 3: Do unified collection at current Tellor Layer block
+                logger.info(f"Collecting unified data at current Tellor Layer block {current_layer_height}")
+                current_success = run_specific_block_collection_for_layer(collector, current_layer_height)
+                if current_success:
+                    logger.info(f"Successfully collected data for current block {current_layer_height}")
+                else:
+                    logger.warning(f"Failed to collect data for current block {current_layer_height}")
+                
+                check_shutdown()
+                
+                # Step 4: Find largest gap in database and collect at gap block
+                logger.info("Finding largest gap in Tellor Layer block coverage...")
+                gap_block = collector.find_largest_gap_in_layer_blocks()
+                
+                if gap_block is not None:
+                    logger.info(f"Collecting unified data at gap block {gap_block}")
+                    gap_success = run_specific_block_collection_for_layer(collector, gap_block)
+                    if gap_success:
+                        logger.info(f"Successfully collected data for gap block {gap_block}")
+                    else:
+                        logger.warning(f"Failed to collect data for gap block {gap_block}")
+                else:
+                    logger.info("No gaps found in database coverage")
                 
                 cycles_completed += 1
                 
@@ -615,14 +700,14 @@ def run_monitoring_mode(collector: UnifiedDataCollector, args):
             except Exception as e:
                 logger.error(f"Error in monitoring cycle: {e}")
                 
-            # Calculate sleep time
+            # Calculate sleep time until next check period
             elapsed = (datetime.now() - start_time).total_seconds()
-            sleep_time = max(0, args.interval - elapsed)
+            sleep_time = max(0, check_period - elapsed)
             
             if sleep_time > 0 and not shutdown_requested:
                 next_run = datetime.now().replace(microsecond=0) + \
                           timedelta(seconds=sleep_time)
-                logger.info(f"Next collection cycle at: {next_run}")
+                logger.info(f"Next monitoring cycle at: {next_run}")
                 
                 # Sleep in smaller increments (1 second) to be more responsive to shutdown
                 slept = 0
@@ -636,7 +721,7 @@ def run_monitoring_mode(collector: UnifiedDataCollector, args):
         logger.error(f"Error in monitoring mode: {e}")
         raise
     finally:
-        logger.info(f"Successfully completed {cycles_completed} collection cycles")
+        logger.info(f"Successfully completed {cycles_completed} monitoring cycles")
         sys.exit(0)
 
 def run_specific_block_collection(collector: UnifiedDataCollector, args) -> int:
@@ -858,6 +943,82 @@ def run_remove_range(collector: 'UnifiedDataCollector', args):
         logger.error(f"Invalid range format: {e}")
         sys.exit(1)
 
+def run_update_reporter_power(collector: 'UnifiedDataCollector', args):
+    """Update total reporter power for all existing unified snapshots retroactively."""
+    logger.info("Starting retroactive update of total reporter power for all unified snapshots")
+    
+    try:
+        # Get all unified snapshots that have layer block height but missing reporter power
+        import sqlite3
+        
+        snapshots_to_update = []
+        with sqlite3.connect(collector.db.db_path) as conn:
+            cursor = conn.execute('''
+                SELECT id, layer_block_height, eth_block_timestamp, total_reporter_power
+                FROM unified_snapshots 
+                WHERE layer_block_height IS NOT NULL 
+                AND (total_reporter_power IS NULL OR total_reporter_power = 0)
+                ORDER BY layer_block_height ASC
+            ''')
+            
+            columns = [desc[0] for desc in cursor.description]
+            snapshots_to_update = [dict(zip(columns, row)) for row in cursor.fetchall()]
+        
+        if not snapshots_to_update:
+            logger.info("No snapshots found that need reporter power updates")
+            return
+        
+        logger.info(f"Found {len(snapshots_to_update)} snapshots that need reporter power updates")
+        
+        successful_updates = 0
+        failed_updates = 0
+        
+        for i, snapshot in enumerate(snapshots_to_update, 1):
+            if shutdown_requested:
+                logger.info("Shutdown requested, stopping reporter power updates...")
+                break
+                
+            layer_height = snapshot['layer_block_height']
+            eth_timestamp = snapshot['eth_block_timestamp']
+            snapshot_id = snapshot['id']
+            
+            logger.info(f"Processing snapshot {i}/{len(snapshots_to_update)}: "
+                       f"Layer height {layer_height} (snapshot ID {snapshot_id})")
+            
+            try:
+                # Get total reporter power for this layer height
+                total_reporter_power = collector.get_total_reporter_power(layer_height)
+                
+                if total_reporter_power is not None:
+                    # Update the snapshot with the reporter power
+                    update_data = {'total_reporter_power': total_reporter_power}
+                    success = collector.db.update_unified_snapshot_data(eth_timestamp, update_data)
+                    
+                    if success:
+                        successful_updates += 1
+                        logger.info(f"Updated snapshot {snapshot_id} with reporter power {total_reporter_power}")
+                    else:
+                        failed_updates += 1
+                        logger.error(f"Failed to update snapshot {snapshot_id} in database")
+                else:
+                    failed_updates += 1
+                    logger.error(f"Failed to get reporter power for layer height {layer_height}")
+                
+                # Add small delay to avoid overwhelming the RPC
+                time.sleep(0.5)
+                
+            except Exception as e:
+                failed_updates += 1
+                logger.error(f"Error updating snapshot {snapshot_id}: {e}")
+                continue
+        
+        logger.info(f"Retroactive reporter power update completed: "
+                   f"{successful_updates} successful, {failed_updates} failed")
+        
+    except Exception as e:
+        logger.error(f"Error during retroactive reporter power update: {e}")
+        sys.exit(1)
+
 
 def main():
     """Main function."""
@@ -883,8 +1044,8 @@ def main():
                            help='Run backfill for incomplete data only')
     mode_group.add_argument('--summary', action='store_true',
                            help='Show data collection summary only')
-    mode_group.add_argument('--monitor', action='store_true',
-                           help='Run in continuous monitoring mode')
+    mode_group.add_argument('--monitor', type=int, metavar='CHECK_PERIOD',
+                           help='Run in continuous monitoring mode with specified check period in seconds')
     mode_group.add_argument('--get-all-historic', action='store_true',
                            help='Collect all historic data (one sample per day back to genesis)')
     mode_group.add_argument('--bridge-historic', action='store_true',
@@ -897,8 +1058,10 @@ def main():
                            help='Remove and rerun collection for Tellor Layer block range (inclusive)')
     mode_group.add_argument('--remove-range', type=str, metavar='RANGE',
                            help='Remove data for range of Tellor Layer blocks (format: start-end, e.g., 1554392-1791109)')
+    mode_group.add_argument('--update-reporter-power', action='store_true',
+                           help='Update total reporter power for all existing unified snapshots retroactively')
     
-    # Monitoring parameters
+    # Monitoring parameters (now unused since check_period is part of --monitor)
     parser.add_argument('--interval', type=int, default=3600,
                        help='Monitoring interval in seconds (default: 3600)')
     
@@ -935,7 +1098,7 @@ def main():
             show_summary(collector)
         elif args.backfill:
             run_backfill(collector, args)
-        elif args.monitor:
+        elif args.monitor is not None:
             run_monitoring_mode(collector, args)
         elif args.get_all_historic:
             run_historic_collection(collector, args)
@@ -949,6 +1112,8 @@ def main():
             run_remove_and_rerun_range(collector, args)
         elif args.remove_range:
             run_remove_range(collector, args)
+        elif args.update_reporter_power:
+            run_update_reporter_power(collector, args)
         else:
             run_single_collection(collector, args)
             
