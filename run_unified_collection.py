@@ -570,13 +570,82 @@ def run_single_collection(collector: UnifiedDataCollector, args):
     return processed
 
 def run_backfill(collector: UnifiedDataCollector, args):
-    """Run backfill for incomplete data."""
-    logger.info("Starting backfill for incomplete data")
+    """Run backfill for snapshots with zero values in key data columns."""
+    logger.info("Starting backfill for snapshots with zero values in key data columns")
     
-    updated = collector.backfill_incomplete_data(max_backfill=args.max_backfill)
+    # Get snapshots with zero values
+    snapshots_with_zeros = collector.db.get_snapshots_with_zero_values()
     
-    logger.info(f"Backfill completed: {updated} snapshots updated")
-    return updated
+    if not snapshots_with_zeros:
+        logger.info("No snapshots found with zero values in key data columns")
+        return 0
+    
+    logger.info(f"Found {len(snapshots_with_zeros)} snapshots with zero values to backfill")
+    
+    # Apply max_backfill limit
+    if len(snapshots_with_zeros) > args.max_backfill:
+        snapshots_with_zeros = snapshots_with_zeros[:args.max_backfill]
+        logger.info(f"Limited to {args.max_backfill} snapshots due to max_backfill setting")
+    
+    successful_updates = 0
+    failed_updates = 0
+    
+    for i, snapshot in enumerate(snapshots_with_zeros, 1):
+        if shutdown_requested:
+            logger.info("Shutdown requested, stopping backfill...")
+            break
+            
+        layer_height = snapshot.get('layer_block_height')
+        eth_timestamp = snapshot.get('eth_block_timestamp')
+        eth_block_number = snapshot.get('eth_block_number', 0)
+        
+        if not layer_height or not eth_timestamp:
+            logger.warning(f"Skipping snapshot {snapshot.get('id')} due to missing layer height or timestamp")
+            failed_updates += 1
+            continue
+            
+        logger.info(f"Processing snapshot {i}/{len(snapshots_with_zeros)}: "
+                   f"Layer height {layer_height}, ETH timestamp {eth_timestamp}")
+        
+        # Show what columns have zero values for this snapshot
+        zero_columns = []
+        if snapshot.get('addresses_with_balance', 0) == 0:
+            zero_columns.append('addresses_with_balance')
+        if snapshot.get('total_trb_balance', 0) == 0:
+            zero_columns.append('total_trb_balance')
+        if snapshot.get('bonded_tokens', 0) == 0:
+            zero_columns.append('bonded_tokens')
+        if snapshot.get('bridge_balance_trb', 0) == 0:
+            zero_columns.append('bridge_balance_trb')
+        
+        logger.info(f"Zero value columns for this snapshot: {', '.join(zero_columns)}")
+        
+        try:
+            # Re-run unified collection for this block height
+            success = collector.collect_unified_snapshot(
+                eth_block_number=eth_block_number,
+                eth_timestamp=eth_timestamp,
+                layer_block_height=layer_height
+            )
+            
+            if success:
+                successful_updates += 1
+                logger.info(f"Successfully updated snapshot for layer height {layer_height}")
+            else:
+                failed_updates += 1
+                logger.warning(f"Failed to update snapshot for layer height {layer_height}")
+            
+            # Add delay between collections to avoid overwhelming the nodes
+            time.sleep(1)
+            
+        except Exception as e:
+            failed_updates += 1
+            logger.error(f"Error updating snapshot for layer height {layer_height}: {e}")
+            continue
+    
+    logger.info(f"Backfill completed: {successful_updates} snapshots successfully updated, "
+               f"{failed_updates} failed")
+    return successful_updates
 
 def run_specific_block_collection_for_layer(collector: UnifiedDataCollector, layer_block_height: int) -> bool:
     """

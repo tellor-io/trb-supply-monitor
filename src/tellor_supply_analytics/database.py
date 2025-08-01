@@ -778,4 +778,44 @@ class BalancesDatabase:
                 
         except Exception as e:
             logger.error(f"Error deleting unified snapshot {snapshot_id}: {e}")
-            return False 
+            return False
+
+    def get_snapshots_with_zero_values(self) -> List[Dict]:
+        """
+        Get unified snapshots that have zero values in key data columns.
+        
+        Returns snapshots where any of these columns are 0 or NULL:
+        - addresses_with_balance
+        - total_trb_balance 
+        - bonded_tokens
+        - bridge_balance_trb
+        
+        Excludes snapshots with layer_block_height < 1000.
+        
+        Returns:
+            List of snapshot dictionaries with zero values
+        """
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.execute('''
+                    SELECT * FROM unified_snapshots 
+                    WHERE (
+                        addresses_with_balance = 0 OR addresses_with_balance IS NULL OR
+                        total_trb_balance = 0 OR total_trb_balance IS NULL OR
+                        bonded_tokens = 0 OR bonded_tokens IS NULL OR
+                        bridge_balance_trb = 0 OR bridge_balance_trb IS NULL
+                    )
+                    AND layer_block_height IS NOT NULL
+                    AND layer_block_height >= 1000
+                    ORDER BY eth_block_timestamp DESC
+                ''')
+                
+                columns = [desc[0] for desc in cursor.description]
+                snapshots = [dict(zip(columns, row)) for row in cursor.fetchall()]
+                
+                logger.info(f"Found {len(snapshots)} snapshots with zero values in key data columns (layer height >= 1000)")
+                return snapshots
+                
+        except Exception as e:
+            logger.error(f"Error getting snapshots with zero values: {e}")
+            return [] 
