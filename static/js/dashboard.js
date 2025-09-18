@@ -6,7 +6,7 @@ class HistoricalDashboard {
         this.currentPage = 0;
         this.currentLimit = 100;
         this.currentSearch = '';
-        this.currentTimeRange = 8760;
+        this.currentTimeRange = 24; // Default to 24 hours
         this.historicalData = [];
         this.charts = {
             supply: null,
@@ -19,6 +19,11 @@ class HistoricalDashboard {
     
     init() {
         this.bindEvents();
+        // Read the actual selected value from the dropdown
+        const timeRangeSelect = document.getElementById('timeRangeSelect');
+        if (timeRangeSelect) {
+            this.currentTimeRange = parseInt(timeRangeSelect.value);
+        }
         this.loadInitialData();
     }
     
@@ -477,8 +482,8 @@ class HistoricalDashboard {
                         backgroundColor: 'rgba(0, 255, 136, 0.1)',
                         fill: true,
                         tension: 0.1,
-                        pointRadius: 2,
-                        pointHoverRadius: 6
+                        pointRadius: 1,
+                        pointHoverRadius: 4
                     },
                     {
                         label: 'Free Floating TRB',
