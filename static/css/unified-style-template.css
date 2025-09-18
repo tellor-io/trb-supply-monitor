@@ -997,3 +997,253 @@ h4 { font-size: 1rem; color: var(--text-tertiary); }
         transform: scale(1);
     }
 }
+
+/* ========================================
+   18. CHART TABS SYSTEM
+   ======================================== */
+
+/* Chart tabs container */
+.chart-tabs {
+    display: flex;
+    gap: 0;
+    border-bottom: 2px solid var(--border-secondary);
+    margin-bottom: var(--spacing-lg);
+}
+
+/* Individual chart tab buttons */
+.chart-tab {
+    background: rgba(30, 30, 40, 0.3);
+    border: 1px solid var(--border-secondary);
+    border-bottom: none;
+    color: var(--text-secondary);
+    padding: var(--spacing-sm) var(--spacing-lg);
+    cursor: pointer;
+    transition: all 0.3s ease;
+    border-radius: 8px 8px 0 0;
+    font-weight: 500;
+    position: relative;
+    margin-bottom: -2px;
+}
+
+.chart-tab:hover {
+    background: rgba(0, 255, 136, 0.1);
+    color: var(--text-primary);
+    border-color: var(--primary-green);
+}
+
+.chart-tab.active {
+    background: rgba(0, 255, 136, 0.2);
+    color: var(--primary-green);
+    border-color: var(--primary-green);
+    border-bottom: 2px solid var(--bg-primary);
+    z-index: 1;
+}
+
+.chart-tab.active::after {
+    content: '';
+    position: absolute;
+    bottom: -2px;
+    left: 0;
+    right: 0;
+    height: 2px;
+    background: var(--bg-primary);
+}
+
+/* Chart content container */
+.chart-content {
+    position: relative;
+    min-height: 450px;
+}
+
+/* Chart panels */
+.chart-panel {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    opacity: 0;
+    visibility: hidden;
+    transition: all 0.3s ease;
+    pointer-events: none;
+}
+
+.chart-panel.active {
+    opacity: 1;
+    visibility: visible;
+    pointer-events: auto;
+    position: relative;
+}
+
+/* Responsive chart tabs */
+@media (max-width: 768px) {
+    .chart-tabs {
+        flex-direction: column;
+        border-bottom: none;
+        border-right: 2px solid var(--border-secondary);
+        width: 200px;
+        float: left;
+        margin-right: var(--spacing-lg);
+        margin-bottom: 0;
+    }
+    
+    .chart-tab {
+        border-radius: 0 8px 8px 0;
+        border-right: none;
+        margin-bottom: 0;
+        margin-right: -2px;
+    }
+    
+    .chart-tab.active {
+        border-right: 2px solid var(--bg-primary);
+    }
+    
+    .chart-tab.active::after {
+        top: 0;
+        bottom: 0;
+        right: -2px;
+        left: auto;
+        width: 2px;
+        height: auto;
+    }
+    
+    .chart-content {
+        margin-left: 220px;
+    }
+}
+
+@media (max-width: 480px) {
+    .chart-tabs {
+        width: 100%;
+        float: none;
+        flex-direction: row;
+        border-right: none;
+        border-bottom: 2px solid var(--border-secondary);
+        margin-right: 0;
+        margin-bottom: var(--spacing-lg);
+        overflow-x: auto;
+    }
+    
+    .chart-tab {
+        border-radius: 8px 8px 0 0;
+        border-right: 1px solid var(--border-secondary);
+        border-bottom: none;
+        margin-right: 0;
+        margin-bottom: -2px;
+        white-space: nowrap;
+        min-width: 120px;
+    }
+    
+    .chart-tab.active {
+        border-bottom: 2px solid var(--bg-primary);
+        border-right: 1px solid var(--border-secondary);
+    }
+    
+    .chart-tab.active::after {
+        bottom: -2px;
+        right: 0;
+        top: auto;
+        width: auto;
+        height: 2px;
+    }
+    
+    .chart-content {
+        margin-left: 0;
+    }
+}
+
+/* ========================================
+   19. COMPACT STATS DISPLAY
+   ======================================== */
+
+.compact-stats {
+    display: flex;
+    flex-direction: column;
+    gap: var(--spacing-xs);
+    font-size: 0.85rem;
+    min-width: 200px;
+    max-width: 300px;
+}
+
+.compact-stat-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: var(--spacing-xs) 0;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.compact-stat-item:last-child {
+    border-bottom: none;
+}
+
+.compact-stat-label {
+    color: var(--text-secondary);
+    font-weight: 500;
+    white-space: nowrap;
+}
+
+.compact-stat-value {
+    color: var(--primary-green);
+    font-weight: 600;
+    text-align: right;
+    margin-left: var(--spacing-sm);
+}
+
+/* Responsive compact stats */
+@media (max-width: 1024px) {
+    .compact-stats {
+        min-width: 180px;
+        max-width: 250px;
+        font-size: 0.8rem;
+    }
+}
+
+@media (max-width: 768px) {
+    .card-header .flex.justify-between {
+        flex-direction: column;
+        gap: var(--spacing-md);
+        align-items: stretch;
+    }
+    
+    .compact-stats {
+        min-width: auto;
+        max-width: none;
+        flex-direction: row;
+        flex-wrap: wrap;
+        gap: var(--spacing-sm);
+    }
+    
+    .compact-stat-item {
+        flex: 1 1 calc(50% - var(--spacing-sm));
+        min-width: 140px;
+        border-bottom: none;
+        background: rgba(30, 30, 40, 0.3);
+        padding: var(--spacing-sm);
+        border-radius: 4px;
+        flex-direction: column;
+        text-align: center;
+        gap: var(--spacing-xs);
+    }
+    
+    .compact-stat-value {
+        margin-left: 0;
+    }
+}
+
+@media (max-width: 480px) {
+    .compact-stats {
+        flex-direction: column;
+    }
+    
+    .compact-stat-item {
+        flex: none;
+        min-width: auto;
+        flex-direction: row;
+        justify-content: space-between;
+        text-align: left;
+    }
+    
+    .compact-stat-value {
+        margin-left: var(--spacing-sm);
+    }
+}

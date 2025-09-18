@@ -27,34 +27,80 @@
             <!-- Timeline Charts Section - Moved to top -->
             <section class="card mb-xl" id="chartsSection">
                 <div class="card-header">
-                    <h2>Supply Trends</h2>
-                    <div class="flex gap-sm">
-                        <select id="timeRangeSelect" class="form-input" style="width: auto;">
-                            <option value="6">Last 6 hours</option>
-                            <option value="12">Last 12 hours</option>
-                            <option value="24" selected>Last 24 hours</option>
-                            <option value="48">Last 48 hours</option>
-                            <option value="72">Last 72 hours</option>
-                            <option value="168">Last 7 days</option>
-                            <option value="720">Last 30 days</option>
-                            <option value="8760">All Available Data</option>
-                        </select>
+                    <div class="flex justify-between items-start">
+                        <div>
+                            <h2>Supply Trends</h2>
+                            <div class="flex gap-sm mt-sm">
+                                <select id="timeRangeSelect" class="form-input" style="width: auto;">
+                                    <option value="6">Last 6 hours</option>
+                                    <option value="12">Last 12 hours</option>
+                                    <option value="24" selected>Last 24 hours</option>
+                                    <option value="48">Last 48 hours</option>
+                                    <option value="72">Last 72 hours</option>
+                                    <option value="168">Last 7 days</option>
+                                    <option value="720">Last 30 days</option>
+                                    <option value="8760">All Available Data</option>
+                                </select>
+                            </div>
+                            <!-- Average Block Time Display -->
+                            <div id="avgBlockTimeDisplay" class="text-sm text-tertiary mt-sm" style="display: none;">
+                                <!-- Block time info will be populated by JavaScript -->
+                            </div>
+                        </div>
+                        
+                        <!-- Compact Stats Display -->
+                        <div id="compactStats" class="compact-stats">
+                            <div class="compact-stat-item">
+                                <span class="compact-stat-label">Total Addresses:</span>
+                                <span id="compactTotalAddresses" class="compact-stat-value">--</span>
+                            </div>
+                            <div class="compact-stat-item">
+                                <span class="compact-stat-label">With Balance:</span>
+                                <span id="compactAddressesWithBalance" class="compact-stat-value">--</span>
+                            </div>
+                            <div class="compact-stat-item">
+                                <span class="compact-stat-label">Free Floating:</span>
+                                <span id="compactFreeFloating" class="compact-stat-value">--</span>
+                            </div>
+                            <div class="compact-stat-item">
+                                <span class="compact-stat-label">Layer Supply:</span>
+                                <span id="compactLayerSupply" class="compact-stat-value">--</span>
+                            </div>
+                            <div class="compact-stat-item">
+                                <span class="compact-stat-label">Block Height:</span>
+                                <span id="compactBlockHeight" class="compact-stat-value">--</span>
+                            </div>
+                            <div class="compact-stat-item">
+                                <span class="compact-stat-label">Data Points:</span>
+                                <span id="compactHistoricalPoints" class="compact-stat-value">--</span>
+                            </div>
+                        </div>
                     </div>
                 </div>
                 <div class="card-body">
-                    <!-- Supply Overview Chart -->
-                    <div id="supplyChartContainer" class="chart-container mb-lg">
-                        <canvas id="supplyChart" width="400" height="200"></canvas>
+                    <!-- Chart Tab Navigation -->
+                    <div class="chart-tabs mb-lg">
+                        <button class="chart-tab active" data-chart="supply">Supply Overview</button>
+                        <button class="chart-tab" data-chart="bridge">Bridge & Staking</button>
+                        <button class="chart-tab" data-chart="balance">Active Balances</button>
                     </div>
                     
-                    <!-- Bridge & Staking Chart -->
-                    <div id="bridgeChartContainer" class="chart-container mb-lg">
-                        <canvas id="bridgeChart" width="400" height="200"></canvas>
-                    </div>
-                    
-                    <!-- Active Balances Chart -->
-                    <div id="balanceChartContainer" class="chart-container mb-lg">
-                        <canvas id="balanceChart" width="400" height="200"></canvas>
+                    <!-- Chart Containers -->
+                    <div class="chart-content">
+                        <!-- Supply Overview Chart -->
+                        <div id="supplyChartContainer" class="chart-container chart-panel active" data-chart="supply">
+                            <canvas id="supplyChart" width="400" height="200"></canvas>
+                        </div>
+                        
+                        <!-- Bridge & Staking Chart -->
+                        <div id="bridgeChartContainer" class="chart-container chart-panel" data-chart="bridge">
+                            <canvas id="bridgeChart" width="400" height="200"></canvas>
+                        </div>
+                        
+                        <!-- Active Balances Chart -->
+                        <div id="balanceChartContainer" class="chart-container chart-panel" data-chart="balance">
+                            <canvas id="balanceChart" width="400" height="200"></canvas>
+                        </div>
                     </div>
                 </div>
             </section>
@@ -108,24 +154,6 @@
                                 </tr>
                             </tbody>
                         </table>
-                    </div>
-                </div>
-            </section>
-
-            <!-- Current Stats Summary -->
-            <section class="mb-xl" id="statsSection">
-                <h2 class="mb-lg">Current TRB Supply Metrics</h2>
-                <div class="grid grid-auto-fit gap-lg" id="statsGrid">
-                    <!-- Stats will be loaded dynamically -->
-                    <div class="stat-card">
-                        <div class="stat-icon">
-                            <i class="fas fa-spinner fa-spin"></i>
-                        </div>
-                        <div class="stat-content">
-                            <div class="stat-number">Loading...</div>
-                            <div class="stat-title">Total Addresses</div>
-                            <div class="stat-subtitle">Loading data...</div>
-                        </div>
                     </div>
                 </div>
             </section>

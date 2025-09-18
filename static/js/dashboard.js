@@ -35,7 +35,44 @@ class HistoricalDashboard {
         document.getElementById('refreshBtn').addEventListener('click', () => this.loadInitialData());
         document.getElementById('exportDataBtn').addEventListener('click', () => this.exportData());
         
-        // Chart toggle buttons removed - now showing all charts simultaneously
+        // Chart tab switching
+        this.bindChartTabs();
+    }
+    
+    bindChartTabs() {
+        // Get all chart tab buttons
+        const chartTabs = document.querySelectorAll('.chart-tab');
+        
+        chartTabs.forEach(tab => {
+            tab.addEventListener('click', (e) => {
+                const targetChart = e.target.getAttribute('data-chart');
+                this.switchToChart(targetChart);
+            });
+        });
+    }
+    
+    switchToChart(chartType) {
+        // Remove active class from all tabs and panels
+        document.querySelectorAll('.chart-tab').forEach(tab => {
+            tab.classList.remove('active');
+        });
+        document.querySelectorAll('.chart-panel').forEach(panel => {
+            panel.classList.remove('active');
+        });
+        
+        // Add active class to selected tab and panel
+        const activeTab = document.querySelector(`.chart-tab[data-chart="${chartType}"]`);
+        const activePanel = document.querySelector(`.chart-panel[data-chart="${chartType}"]`);
+        
+        if (activeTab) activeTab.classList.add('active');
+        if (activePanel) activePanel.classList.add('active');
+        
+        // Trigger chart resize if needed (for Chart.js)
+        setTimeout(() => {
+            if (this.charts[chartType]) {
+                this.charts[chartType].resize();
+            }
+        }, 300); // Wait for CSS transition to complete
     }
     
     async loadInitialData() {
@@ -198,7 +235,7 @@ class HistoricalDashboard {
         try {
             const response = await fetch(`${this.apiBase}/api/summary`);
             const data = await response.json();
-            this.updateStatsCards(data);
+            this.updateCompactStats(data);
         } catch (error) {
             console.error('Error loading summary:', error);
         }
@@ -223,79 +260,44 @@ class HistoricalDashboard {
         }
     }
     
-    updateStatsCards(data) {
-        const statsGrid = document.getElementById('statsGrid');
-        const lastUpdated = new Date(data.run_time).toLocaleString();
+    updateCompactStats(data) {
+        // Update total addresses
+        const totalAddressesEl = document.getElementById('compactTotalAddresses');
+        if (totalAddressesEl) {
+            totalAddressesEl.textContent = this.formatNumber(data.total_addresses);
+        }
         
-        statsGrid.innerHTML = `
-            <div class="stat-card clickable">
-                <div class="stat-icon">
-                    <i class="fas fa-users"></i>
-                </div>
-                <div class="stat-content">
-                    <div class="stat-number">${this.formatNumber(data.total_addresses)}</div>
-                    <div class="stat-title">Total Addresses</div>
-                    <div class="stat-subtitle">Last updated: ${lastUpdated}</div>
-                </div>
-            </div>
-            
-            <div class="stat-card clickable">
-                <div class="stat-icon">
-                    <i class="fas fa-wallet"></i>
-                </div>
-                <div class="stat-content">
-                    <div class="stat-number">${this.formatNumber(data.addresses_with_balance)}</div>
-                    <div class="stat-title">Addresses with Balance</div>
-                    <div class="stat-subtitle">${((data.addresses_with_balance / data.total_addresses) * 100).toFixed(1)}% of total</div>
-                </div>
-            </div>
-            
-            <div class="stat-card clickable">
-                <div class="stat-icon">
-                    <i class="fas fa-coins"></i>
-                </div>
-                <div class="stat-content">
-                    <div class="stat-number">${this.formatNumber(data.free_floating_trb, 2)} TRB</div>
-                    <div class="stat-title">Free Floating TRB</div>
-                </div>
-            </div>
-            
-            <div class="stat-card clickable" style="position: relative;">
-                <div class="stat-icon">
-                    <i class="fas fa-exchange-alt"></i>
-                </div>
-                <div class="stat-content">
-                    <div class="stat-number">${this.formatNumber(data.total_trb_balance, 2)} TRB</div>
-                    <div class="stat-title">Layer Total Supply</div>
-                    <div class="stat-subtitle" style="font-size: 0.7rem; line-height: 1.2;">
-                        Bridge: ${this.formatNumber(data.bridge_balance_trb, 2)} TRB<br>
-                        ${this.calculateSupplyDifference(data.total_trb_balance, data.bridge_balance_trb)}
-                    </div>
-                </div>
-            </div>
-            
-            <div class="stat-card clickable">
-                <div class="stat-icon">
-                    <i class="fas fa-cube"></i>
-                </div>
-                <div class="stat-content">
-                    <div class="stat-number">${this.formatNumber(data.layer_block_height, 0, false)}</div>
-                    <div class="stat-title">Block Height</div>
-                    <div class="stat-subtitle">Height of Data Shown</div>
-                </div>
-            </div>
-            
-            <div class="stat-card clickable">
-                <div class="stat-icon">
-                    <i class="fas fa-clock"></i>
-                </div>
-                <div class="stat-content">
-                    <div class="stat-number">${this.historicalData.length}</div>
-                    <div class="stat-title">Historical Points</div>
-                    <div class="stat-subtitle">Last ${this.currentTimeRange}h data</div>
-                </div>
-            </div>
-        `;
+        // Update addresses with balance (with percentage)
+        const addressesWithBalanceEl = document.getElementById('compactAddressesWithBalance');
+        if (addressesWithBalanceEl) {
+            const percentage = ((data.addresses_with_balance / data.total_addresses) * 100).toFixed(1);
+            addressesWithBalanceEl.textContent = `${this.formatNumber(data.addresses_with_balance)} (${percentage}%)`;
+        }
+        
+        // Update free floating TRB
+        const freeFloatingEl = document.getElementById('compactFreeFloating');
+        if (freeFloatingEl) {
+            freeFloatingEl.textContent = `${this.formatNumber(data.free_floating_trb, 2)} TRB`;
+        }
+        
+        // Update layer supply with bridge balance info
+        const layerSupplyEl = document.getElementById('compactLayerSupply');
+        if (layerSupplyEl) {
+            const difference = this.calculateSupplyDifference(data.total_trb_balance, data.bridge_balance_trb);
+            layerSupplyEl.innerHTML = `${this.formatNumber(data.total_trb_balance, 2)} TRB<br><span style="font-size: 0.75em; color: var(--text-tertiary);">Bridge: ${this.formatNumber(data.bridge_balance_trb, 2)} TRB</span>`;
+        }
+        
+        // Update block height
+        const blockHeightEl = document.getElementById('compactBlockHeight');
+        if (blockHeightEl) {
+            blockHeightEl.textContent = this.formatNumber(data.layer_block_height, 0, false);
+        }
+        
+        // Update historical points
+        const historicalPointsEl = document.getElementById('compactHistoricalPoints');
+        if (historicalPointsEl) {
+            historicalPointsEl.textContent = `${this.historicalData.length}`;
+        }
     }
     
     updateBalancesTable(data) {
@@ -453,6 +455,9 @@ class HistoricalDashboard {
 
         // Create or update charts
         this.createCharts(data.timeline);
+        
+        // Calculate and display average block time
+        this.updateAverageBlockTime(data.timeline);
     }
     
     createCharts(timeline) {
@@ -883,6 +888,78 @@ class HistoricalDashboard {
         }
         
         this.scrollToTableRow(parseInt(timestamp));
+    }
+    
+    updateAverageBlockTime(timeline) {
+        const display = document.getElementById('avgBlockTimeDisplay');
+        if (!display || !timeline || timeline.length < 2) {
+            if (display) {
+                display.style.display = 'none';
+            }
+            return;
+        }
+        
+        // Filter out data points without layer block height
+        const validData = timeline.filter(d => d.layer_block_height && d.timestamp);
+        
+        if (validData.length < 2) {
+            display.style.display = 'none';
+            return;
+        }
+        
+        // Sort by timestamp to ensure proper order
+        const sortedData = [...validData].sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0));
+        
+        // Get start and end points
+        const startPoint = sortedData[0];
+        const endPoint = sortedData[sortedData.length - 1];
+        
+        // Calculate differences
+        const blockDifference = endPoint.layer_block_height - startPoint.layer_block_height;
+        const timeDifference = endPoint.timestamp - startPoint.timestamp; // in seconds
+        
+        if (blockDifference <= 0 || timeDifference <= 0) {
+            display.style.display = 'none';
+            return;
+        }
+        
+        // Calculate average block time in seconds
+        const avgBlockTimeSeconds = timeDifference / blockDifference;
+        
+        // Format the time nicely
+        let timeString;
+        if (avgBlockTimeSeconds < 60) {
+            timeString = `${avgBlockTimeSeconds.toFixed(3)} seconds`;
+        } else if (avgBlockTimeSeconds < 3600) {
+            const minutes = avgBlockTimeSeconds / 60;
+            timeString = `${minutes.toFixed(3)} minutes`;
+        } else {
+            const hours = avgBlockTimeSeconds / 3600;
+            timeString = `${hours.toFixed(3)} hours`;
+        }
+        
+        // Get timeframe description
+        const timeframeHours = this.currentTimeRange;
+        let timeframeDesc;
+        if (timeframeHours === 8760) {
+            timeframeDesc = "all available data";
+        } else if (timeframeHours < 24) {
+            timeframeDesc = `past ${timeframeHours} hours`;
+        } else if (timeframeHours < 168) {
+            const days = timeframeHours / 24;
+            timeframeDesc = `past ${days} days`;
+        } else if (timeframeHours === 168) {
+            timeframeDesc = "past 7 days";
+        } else if (timeframeHours === 720) {
+            timeframeDesc = "past 30 days";
+        } else {
+            const days = Math.round(timeframeHours / 24);
+            timeframeDesc = `past ${days} days`;
+        }
+        
+        // Display the result
+        display.innerHTML = `Average block time for ${timeframeDesc}: <strong>${timeString}</strong>`;
+        display.style.display = 'block';
     }
 }
 
