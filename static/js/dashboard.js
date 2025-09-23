@@ -274,23 +274,28 @@ class HistoricalDashboard {
             addressesWithBalanceEl.textContent = `${this.formatNumber(data.addresses_with_balance)} (${percentage}%)`;
         }
         
+        // Update layer supply (just the layer supply)
+        const layerSupplyEl = document.getElementById('compactLayerSupply');
+        if (layerSupplyEl) {
+            layerSupplyEl.textContent = `${this.formatNumber(data.total_trb_balance, 2)} TRB`;
+        }
+        
+        // Update bridge balance
+        const bridgeBalanceEl = document.getElementById('compactBridgeBalance');
+        if (bridgeBalanceEl) {
+            bridgeBalanceEl.textContent = `${this.formatNumber(data.bridge_balance_trb, 2)} TRB`;
+        }
+        
+        // Update block height (without commas)
+        const blockHeightEl = document.getElementById('compactBlockHeight');
+        if (blockHeightEl) {
+            blockHeightEl.textContent = data.layer_block_height ? data.layer_block_height.toString() : '--';
+        }
+        
         // Update free floating TRB
         const freeFloatingEl = document.getElementById('compactFreeFloating');
         if (freeFloatingEl) {
             freeFloatingEl.textContent = `${this.formatNumber(data.free_floating_trb, 2)} TRB`;
-        }
-        
-        // Update layer supply with bridge balance info
-        const layerSupplyEl = document.getElementById('compactLayerSupply');
-        if (layerSupplyEl) {
-            const difference = this.calculateSupplyDifference(data.total_trb_balance, data.bridge_balance_trb);
-            layerSupplyEl.innerHTML = `${this.formatNumber(data.total_trb_balance, 2)} TRB<br><span style="font-size: 0.75em; color: var(--text-tertiary);">Bridge: ${this.formatNumber(data.bridge_balance_trb, 2)} TRB</span>`;
-        }
-        
-        // Update block height
-        const blockHeightEl = document.getElementById('compactBlockHeight');
-        if (blockHeightEl) {
-            blockHeightEl.textContent = this.formatNumber(data.layer_block_height, 0, false);
         }
         
         // Update historical points
