@@ -464,18 +464,20 @@ class BlockTimeAnalytics {
     
     showEstimationError(message) {
         const errorDiv = document.getElementById('estimationError');
-        const errorText = document.getElementById('estimationErrorText');
-        
-        if (errorDiv && errorText) {
-            errorText.textContent = message;
-            errorDiv.classList.remove('hidden');
+        if (errorDiv) {
+            errorDiv.innerHTML = `
+                <div class="alert alert-error">
+                    <i class="fas fa-exclamation-triangle"></i>
+                    <span>${message}</span>
+                </div>
+            `;
         }
     }
     
     hideEstimationError() {
         const errorDiv = document.getElementById('estimationError');
         if (errorDiv) {
-            errorDiv.classList.add('hidden');
+            errorDiv.innerHTML = '';
         }
     }
     
