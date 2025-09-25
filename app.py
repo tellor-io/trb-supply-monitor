@@ -164,6 +164,28 @@ async def root(request: Request):
         """)
 
 
+@app.get("/analytics/block-time", response_class=HTMLResponse)
+async def block_time_analytics(request: Request):
+    """Serve the block time analytics HTML page."""
+    html_file = Path("templates/block-time-analytics.html")
+    if html_file.exists():
+        return templates.TemplateResponse("block-time-analytics.html", {
+            "request": request,
+            "root_path": request.scope.get("root_path", "")
+        })
+    else:
+        return HTMLResponse("""
+        <html>
+            <head><title>Block Time Analytics</title></head>
+            <body style="font-family: Arial, sans-serif; margin: 40px;">
+                <h1>Block Time Analytics</h1>
+                <p>Block time analytics page is initializing... Please ensure templates/block-time-analytics.html exists.</p>
+                <p><a href="/" style="color: #007bff;">Back to Dashboard</a></p>
+            </body>
+        </html>
+        """)
+
+
 @app.get("/api/summary")
 async def get_summary():
     """Get summary of latest balance collection."""
@@ -525,6 +547,213 @@ async def get_unified_summary():
         
     except Exception as e:
         logger.error(f"Error getting unified summary: {e}")
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
+@app.get("/api/block-time/data")
+async def get_block_time_data(
+    hours_back: int = Query(24, description="Hours back to analyze", ge=1, le=8760)
+):
+    """Get block time data for the specified time period."""
+    try:
+        # Calculate the cutoff timestamp
+        cutoff_timestamp = int((datetime.now() - timedelta(hours=hours_back)).timestamp())
+        
+        # Get unified snapshots with layer block data, ordered by timestamp
+        import sqlite3
+        with sqlite3.connect(db.db_path) as conn:
+            cursor = conn.execute('''
+                SELECT 
+                    eth_block_timestamp,
+                    layer_block_height,
+                    layer_block_timestamp,
+                    eth_block_datetime
+                FROM unified_snapshots 
+                WHERE eth_block_timestamp >= ?
+                  AND layer_block_height IS NOT NULL 
+                  AND layer_block_timestamp IS NOT NULL
+                ORDER BY eth_block_timestamp ASC
+            ''', (cutoff_timestamp,))
+            
+            rows = cursor.fetchall()
+        
+        if len(rows) < 2:
+            return {
+                "block_times": [],
+                "count": 0,
+                "hours_back": hours_back,
+                "message": "Insufficient data for block time calculation"
+            }
+        
+        # Calculate block times between consecutive rows
+        block_times = []
+        for i in range(1, len(rows)):
+            prev_row = rows[i-1]
+            curr_row = rows[i]
+            
+            # Extract data
+            prev_height = prev_row[1]
+            prev_timestamp = prev_row[2]
+            curr_height = curr_row[1]
+            curr_timestamp = curr_row[2]
+            curr_eth_timestamp = curr_row[0]
+            curr_datetime = curr_row[3]
+            
+            # Calculate block time
+            height_diff = curr_height - prev_height
+            time_diff = curr_timestamp - prev_timestamp
+            
+            if height_diff > 0 and time_diff > 0:
+                block_time_seconds = time_diff / height_diff
+                block_times.append({
+                    "timestamp": curr_eth_timestamp,
+                    "datetime": curr_datetime,
+                    "block_time_seconds": round(block_time_seconds, 3),
+                    "height_range": f"{prev_height}-{curr_height}",
+                    "blocks_counted": height_diff,
+                    "time_span_seconds": time_diff
+                })
+        
+        return {
+            "block_times": block_times,
+            "count": len(block_times),
+            "hours_back": hours_back,
+            "average_block_time": round(sum(bt["block_time_seconds"] for bt in block_times) / len(block_times), 3) if block_times else 0
+        }
+        
+    except Exception as e:
+        logger.error(f"Error getting block time data: {e}")
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
+@app.get("/api/block-time/estimate")
+async def estimate_future_block_time(
+    target_height: int = Query(..., description="Target block height to estimate", ge=1)
+):
+    """Estimate when a future block height will be reached based on current block time data."""
+    try:
+        import sqlite3
+        
+        # Get current block height and timestamp from latest snapshot
+        with sqlite3.connect(db.db_path) as conn:
+            cursor = conn.execute('''
+                SELECT 
+                    layer_block_height,
+                    layer_block_timestamp,
+                    eth_block_datetime
+                FROM unified_snapshots 
+                WHERE layer_block_height IS NOT NULL 
+                  AND layer_block_timestamp IS NOT NULL
+                ORDER BY eth_block_timestamp DESC 
+                LIMIT 1
+            ''')
+            
+            latest_row = cursor.fetchone()
+            
+            if not latest_row:
+                raise HTTPException(status_code=404, detail="No current block data available")
+            
+            current_height = latest_row[0]
+            current_timestamp = latest_row[1]
+            current_datetime = latest_row[2]
+        
+        # Validate target height
+        if target_height <= current_height:
+            raise HTTPException(
+                status_code=400, 
+                detail=f"Target height ({target_height}) must be greater than current height ({current_height})"
+            )
+        
+        # Get average block time from recent data (last 24 hours by default)
+        cutoff_timestamp = int((datetime.now() - timedelta(hours=24)).timestamp())
+        
+        with sqlite3.connect(db.db_path) as conn:
+            cursor = conn.execute('''
+                SELECT 
+                    layer_block_height,
+                    layer_block_timestamp
+                FROM unified_snapshots 
+                WHERE eth_block_timestamp >= ?
+                  AND layer_block_height IS NOT NULL 
+                  AND layer_block_timestamp IS NOT NULL
+                ORDER BY eth_block_timestamp ASC
+            ''', (cutoff_timestamp,))
+            
+            rows = cursor.fetchall()
+        
+        # Calculate average block time from recent data
+        if len(rows) < 2:
+            # Fallback: use a default block time estimate
+            avg_block_time = 1.7  # seconds, based on typical Tellor Layer performance
+            data_source = "default estimate"
+            total_blocks_analyzed = 0
+        else:
+            # Calculate block times between consecutive rows
+            block_times = []
+            for i in range(1, len(rows)):
+                prev_height = rows[i-1][0]
+                prev_timestamp = rows[i-1][1]
+                curr_height = rows[i][0]
+                curr_timestamp = rows[i][1]
+                
+                height_diff = curr_height - prev_height
+                time_diff = curr_timestamp - prev_timestamp
+                
+                if height_diff > 0 and time_diff > 0:
+                    block_time = time_diff / height_diff
+                    block_times.append(block_time)
+            
+            if block_times:
+                avg_block_time = sum(block_times) / len(block_times)
+                data_source = f"last 24 hours ({len(block_times)} data points)"
+                total_blocks_analyzed = sum(rows[i][0] - rows[i-1][0] for i in range(1, len(rows)) if rows[i][0] > rows[i-1][0])
+            else:
+                avg_block_time = 1.7
+                data_source = "default estimate"
+                total_blocks_analyzed = 0
+        
+        # Calculate estimation
+        blocks_remaining = target_height - current_height
+        seconds_until = blocks_remaining * avg_block_time
+        
+        # Calculate estimated arrival time
+        from datetime import timezone
+        current_dt = datetime.fromtimestamp(current_timestamp, tz=timezone.utc)
+        estimated_arrival_utc = current_dt + timedelta(seconds=seconds_until)
+        
+        # Format time until in human-readable format
+        def format_time_until(seconds):
+            if seconds < 60:
+                return f"{int(seconds)} seconds"
+            elif seconds < 3600:
+                minutes = seconds / 60
+                return f"{int(minutes)} minutes"
+            elif seconds < 86400:
+                hours = seconds / 3600
+                return f"{hours:.1f} hours"
+            else:
+                days = seconds / 86400
+                return f"{days:.1f} days"
+        
+        return {
+            "current_height": current_height,
+            "current_timestamp": current_timestamp,
+            "current_datetime": current_datetime,
+            "target_height": target_height,
+            "blocks_remaining": blocks_remaining,
+            "avg_block_time_seconds": round(avg_block_time, 3),
+            "data_source": data_source,
+            "total_blocks_analyzed": total_blocks_analyzed,
+            "seconds_until": round(seconds_until, 1),
+            "time_until_formatted": format_time_until(seconds_until),
+            "estimated_arrival_utc": estimated_arrival_utc.isoformat(),
+            "estimated_arrival_formatted": estimated_arrival_utc.strftime('%Y-%m-%d %H:%M:%S UTC')
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error estimating future block time: {e}")
         raise HTTPException(status_code=500, detail="Internal server error")
 
 

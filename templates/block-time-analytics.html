@@ -1,0 +1,218 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Tellor Layer Block Time Analytics</title>
+    <!-- Static assets use root_path for serving under nginx location prefixes -->
+    <link rel="stylesheet" href="{{ root_path }}/static/css/unified-style-template.css">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
+</head>
+<body>
+    <div class="app">
+        <!-- Navigation -->
+        <nav class="nav">
+            <ul class="nav-list">
+                <li><a href="{{ root_path }}/" class="nav-link">TRB Supply Tracker</a></li>
+                <li><a href="#" class="nav-link active" data-section="block-time">Block Time Analytics</a></li>
+            </ul>
+        </nav>
+
+        <!-- Main Content -->
+        <main class="main">
+            <!-- Block Time Analytics Section -->
+            <section class="card mb-xl" id="blockTimeSection">
+                <div class="card-header">
+                    <div class="flex justify-between items-start">
+                        <div>
+                            <h2>Tellor Layer Block Time Analytics</h2>
+                            <p class="text-sm text-tertiary mt-sm">
+                                Average time between blocks on the Tellor Layer network
+                            </p>
+                            <div class="flex gap-sm mt-sm">
+                                <select id="timeRangeSelect" class="form-input" style="width: auto;">
+                                    <option value="24">Last 24 hours</option>
+                                    <option value="168">Last 7 days</option>
+                                    <option value="720">Last 30 days</option>
+                                    <option value="8760">Full range</option>
+                                </select>
+                                <button class="btn btn-sm btn-primary" id="refreshBtn">
+                                    <i class="fas fa-sync-alt"></i>
+                                    Refresh
+                                </button>
+                            </div>
+                        </div>
+                        
+                        <!-- Stats Display -->
+                        <div id="blockTimeStats" class="compact-stats">
+                            <div class="compact-stat-item">
+                                <span class="compact-stat-label">Current Block Height:</span>
+                                <span id="currentBlockHeight" class="compact-stat-value">--</span>
+                            </div>
+                            <div class="compact-stat-item">
+                                <span class="compact-stat-label">Average Block Time:</span>
+                                <span id="avgBlockTime" class="compact-stat-value">--</span>
+                            </div>
+                            <div class="compact-stat-item">
+                                <span class="compact-stat-label">Data Points:</span>
+                                <span id="dataPointCount" class="compact-stat-value">--</span>
+                            </div>
+                            <div class="compact-stat-item">
+                                <span class="compact-stat-label">Time Range:</span>
+                                <span id="timeRangeDisplay" class="compact-stat-value">--</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="card-body">
+                    <!-- Chart Container -->
+                    <div class="chart-content">
+                        <div id="blockTimeChartContainer" class="chart-container">
+                            <canvas id="blockTimeChart" width="400" height="200"></canvas>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Future Block Height Estimation -->
+            <section class="card mb-xl" id="estimationSection">
+                <div class="card-header">
+                    <h2>Future Block Height Estimation</h2>
+                    <p class="text-sm text-tertiary mt-sm">
+                        Estimate when a future Tellor Layer block height will be reached
+                    </p>
+                </div>
+                <div class="card-body">
+                    <div class="flex gap-md items-end mb-lg">
+                        <div style="flex: 1; max-width: 300px;">
+                            <label for="targetHeightInput" class="form-label">Target Block Height:</label>
+                            <input 
+                                type="number" 
+                                id="targetHeightInput" 
+                                class="form-input" 
+                                placeholder="Enter future block height"
+                                min="1"
+                                step="1"
+                            >
+                        </div>
+                        <button class="btn btn-primary" id="estimateBtn">
+                            <i class="fas fa-calculator"></i>
+                            Estimate
+                        </button>
+                    </div>
+                    
+                    <!-- Estimation Results -->
+                    <div id="estimationResults" class="hidden">
+                        <div class="grid grid-cols-2 gap-lg">
+                            <div class="estimation-info">
+                                <h3 class="text-lg font-semibold mb-sm">Current Network Status</h3>
+                                <div class="space-y-xs">
+                                    <div class="flex justify-between">
+                                        <span class="text-tertiary">Current Height:</span>
+                                        <span id="currentHeight" class="font-mono">--</span>
+                                    </div>
+                                    <div class="flex justify-between">
+                                        <span class="text-tertiary">Current Time:</span>
+                                        <span id="currentTime" class="font-mono">--</span>
+                                    </div>
+                                    <div class="flex justify-between">
+                                        <span class="text-tertiary">Average Block Time:</span>
+                                        <span id="avgBlockTimeUsed" class="font-mono">--</span>
+                                    </div>
+                                    <div class="flex justify-between">
+                                        <span class="text-tertiary">Data Source:</span>
+                                        <span id="dataSource" class="text-sm">--</span>
+                                    </div>
+                                </div>
+                            </div>
+                            
+                            <div class="estimation-results">
+                                <h3 class="text-lg font-semibold mb-sm">Estimation Results</h3>
+                                <div class="space-y-xs">
+                                    <div class="flex justify-between">
+                                        <span class="text-tertiary">Target Height:</span>
+                                        <span id="targetHeightDisplay" class="font-mono">--</span>
+                                    </div>
+                                    <div class="flex justify-between">
+                                        <span class="text-tertiary">Blocks Remaining:</span>
+                                        <span id="blocksRemaining" class="font-mono">--</span>
+                                    </div>
+                                    <div class="flex justify-between">
+                                        <span class="text-tertiary">Time Until:</span>
+                                        <span id="timeUntil" class="font-semibold text-primary">--</span>
+                                    </div>
+                                    <div class="flex justify-between">
+                                        <span class="text-tertiary">Estimated Arrival:</span>
+                                        <span id="estimatedArrival" class="font-mono font-semibold">--</span>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <!-- Local Time Display -->
+                        <div class="mt-lg p-md bg-secondary rounded">
+                            <div class="flex justify-between items-center">
+                                <span class="text-tertiary">Estimated Arrival (Local Time):</span>
+                                <span id="estimatedArrivalLocal" class="font-mono font-semibold text-lg">--</span>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- Error Display (dynamically created when needed) -->
+                    <div id="estimationError"></div>
+                </div>
+            </section>
+
+            <!-- Block Time Data Table -->
+            <section class="card" id="blockTimeDataSection">
+                <div class="card-header">
+                    <h2>Block Time Data</h2>
+                    <div class="flex gap-sm">
+                        <button class="btn btn-sm btn-secondary" id="exportDataBtn">
+                            <i class="fas fa-download"></i>
+                            Export Data
+                        </button>
+                    </div>
+                </div>
+                <div class="card-body">
+                    <div class="table-container" style="max-height: 400px; overflow-y: auto;">
+                        <table class="data-table" id="blockTimeTable">
+                            <thead style="position: sticky; top: 0; background: var(--bg-secondary);">
+                                <tr>
+                                    <th>Timestamp</th>
+                                    <th>Block Time (seconds)</th>
+                                    <th>Height Range</th>
+                                    <th>Blocks Counted</th>
+                                    <th>Time Span (seconds)</th>
+                                </tr>
+                            </thead>
+                            <tbody id="blockTimeTableBody">
+                                <tr>
+                                    <td colspan="5" class="text-center">Loading block time data...</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </section>
+        </main>
+    </div>
+
+    <!-- Loading Overlay -->
+    <div class="loading-overlay hidden" id="loadingOverlay">
+        <div class="spinner"></div>
+        <div class="loading-text">Loading block time data...</div>
+    </div>
+
+    <script>
+        // Set the root path for API calls when served under a proxy
+        window.ROOT_PATH = "{{ root_path }}";
+    </script>
+    <script src="{{ root_path }}/static/js/block-time-analytics.js"></script>
+</body>
+</html>

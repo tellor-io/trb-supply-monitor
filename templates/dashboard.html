@@ -18,7 +18,8 @@
         <!-- Navigation -->
         <nav class="nav">
             <ul class="nav-list">
-                <li><a href="#" class="nav-link active" data-section="dashboard">TRB Supply Tracker (Palmito & Bridge)</a></li>
+                <li><a href="#" class="nav-link active" data-section="dashboard">TRB Supply Tracker</a></li>
+                <li><a href="{{ root_path }}/analytics/block-time" class="nav-link">Block Time Analytics</a></li>
             </ul>
         </nav>
 
@@ -49,30 +50,41 @@
                         </div>
                         
                         <!-- Compact Stats Display -->
-                        <div id="compactStats" class="compact-stats">
-                            <div class="compact-stat-item">
-                                <span class="compact-stat-label">Total Addresses:</span>
-                                <span id="compactTotalAddresses" class="compact-stat-value">--</span>
+                        <div id="compactStats" class="compact-stats-grid">
+                            <!-- Row 1: Layer Supply | Total Addresses -->
+                            <div class="compact-stat-row">
+                                <div class="compact-stat-item">
+                                    <span class="compact-stat-label">Layer Supply:</span>
+                                    <span id="compactLayerSupply" class="compact-stat-value">--</span>
+                                </div>
+                                <div class="compact-stat-item">
+                                    <span class="compact-stat-label">Total Addresses:</span>
+                                    <span id="compactTotalAddresses" class="compact-stat-value">--</span>
+                                </div>
                             </div>
-                            <div class="compact-stat-item">
-                                <span class="compact-stat-label">With Balance:</span>
-                                <span id="compactAddressesWithBalance" class="compact-stat-value">--</span>
+                            
+                            <!-- Row 2: Bridge | With Balance -->
+                            <div class="compact-stat-row">
+                                <div class="compact-stat-item">
+                                    <span class="compact-stat-label">Bridge:</span>
+                                    <span id="compactBridgeBalance" class="compact-stat-value">--</span>
+                                </div>
+                                <div class="compact-stat-item">
+                                    <span class="compact-stat-label">With Balance:</span>
+                                    <span id="compactAddressesWithBalance" class="compact-stat-value">--</span>
+                                </div>
                             </div>
-                            <div class="compact-stat-item">
-                                <span class="compact-stat-label">Free Floating:</span>
-                                <span id="compactFreeFloating" class="compact-stat-value">--</span>
-                            </div>
-                            <div class="compact-stat-item">
-                                <span class="compact-stat-label">Layer Supply:</span>
-                                <span id="compactLayerSupply" class="compact-stat-value">--</span>
-                            </div>
-                            <div class="compact-stat-item">
-                                <span class="compact-stat-label">Block Height:</span>
-                                <span id="compactBlockHeight" class="compact-stat-value">--</span>
-                            </div>
-                            <div class="compact-stat-item">
-                                <span class="compact-stat-label">Data Points:</span>
-                                <span id="compactHistoricalPoints" class="compact-stat-value">--</span>
+                            
+                            <!-- Row 3: Block Height | Free Floating -->
+                            <div class="compact-stat-row">
+                                <div class="compact-stat-item">
+                                    <span class="compact-stat-label">Block Height:</span>
+                                    <span id="compactBlockHeight" class="compact-stat-value">--</span>
+                                </div>
+                                <div class="compact-stat-item">
+                                    <span class="compact-stat-label">Free Floating:</span>
+                                    <span id="compactFreeFloating" class="compact-stat-value">--</span>
+                                </div>
                             </div>
                         </div>
                     </div>
