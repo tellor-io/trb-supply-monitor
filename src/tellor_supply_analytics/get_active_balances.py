@@ -80,7 +80,7 @@ REQUEST_TIMEOUT = 30
 REQUEST_DELAY = 0.1  # Delay between requests to avoid overwhelming the API
 
 # Ethereum/Bridge Configuration
-ETHEREUM_RPC_URL = os.getenv('ETHEREUM_RPC_URL', 'https://rpc.sepolia.org')
+ETHEREUM_RPC_URL = os.getenv('ETHEREUM_RPC_URL')
 TRB_CONTRACT = os.getenv('TRB_CONTRACT')
 CURRENT_BRIDGE_CONTRACT = os.getenv('CURRENT_BRIDGE_CONTRACT')
 OLD_BRIDGE_CONTRACT_1 = os.getenv('OLD_BRIDGE_CONTRACT_1')
@@ -119,6 +119,7 @@ def get_bridge_contract_for_height(layer_height: Optional[int]) -> str:
         return OLD_BRIDGE_CONTRACT_1
     else:
         logger.warning(f"OLD_BRIDGE_CONTRACT_1 not configured, using CURRENT_BRIDGE_CONTRACT for layer height {layer_height}")
+        logger.info(f"CURRENT_BRIDGE_CONTRACT: {CURRENT_BRIDGE_CONTRACT}")
         return CURRENT_BRIDGE_CONTRACT
 
 
