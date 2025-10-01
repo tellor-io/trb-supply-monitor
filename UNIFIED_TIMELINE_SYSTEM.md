@@ -180,8 +180,8 @@ const bridgeChange = current.bridge_balance_trb - historical.bridge_balance_trb;
 ETHEREUM_RPC_URL=https://rpc.sepolia.org
 
 # Contract addresses
-SEPOLIA_TRB_CONTRACT=0x80fc34a2f9FfE86F41580F47368289C402DEc660
-SEPOLIA_BRIDGE_CONTRACT=0x5acb5977f35b1A91C4fE0F4386eB669E046776F2
+TRB_CONTRACT=0x80fc34a2f9FfE86F41580F47368289C402DEc660
+CURRENT_BRIDGE_CONTRACT=0x62733e63499a25E35844c91275d4c3bdb159D29d
 
 # Tellor Layer RPC
 TELLOR_LAYER_RPC_URL=https://node-palmito.tellorlayer.com/rpc/

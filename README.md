@@ -56,8 +56,9 @@ A Python-based blockchain data collection system that gathers token supply infor
    ETHEREUM_RPC_URL=https://ethereum-sepolia-rpc.publicnode.com
    
    # Contract Addresses (Sepolia)
-   SEPOLIA_TRB_CONTRACT=0x80fc34a2f9FfE86F41580F47368289C402DEc660
-   SEPOLIA_BRIDGE_CONTRACT=0x5acb5977f35b1A91C4fE0F4386eB669E046776F2
+   TRB_CONTRACT=0x80fc34a2f9FfE86F41580F47368289C402DEc660
+   CURRENT_BRIDGE_CONTRACT=0x62733e63499a25E35844c91275d4c3bdb159D29d
+   OLD_BRIDGE_CONTRACT_1=0x5acb5977f35b1A91C4fE0F4386eB669E046776F2
    ```
 
 3. **Ensure the `layerd` binary is executable:**
@@ -221,10 +222,21 @@ The system creates a CSV file named `supply_data.csv` with the following columns
 |----------|---------|-------------|
 | `TELLOR_LAYER_RPC_URL` | `https://node-palmito.tellorlayer.com/rpc/` | Tellor Layer RPC endpoint |
 | `ETHEREUM_RPC_URL` | `https://rpc.sepolia.org` | Ethereum Sepolia RPC endpoint |
-| `SEPOLIA_TRB_CONTRACT` | `0x80fc34a2f9FfE86F41580F47368289C402DEc660` | TRB token contract address |
-| `SEPOLIA_BRIDGE_CONTRACT` | `0x5acb5977f35b1A91C4fE0F4386eB669E046776F2` | Bridge contract address |
+| `TRB_CONTRACT` | `0x80fc34a2f9FfE86F41580F47368289C402DEc660` | TRB token contract address |
+| `CURRENT_BRIDGE_CONTRACT` | `0x62733e63499a25E35844c91275d4c3bdb159D29d` | Current bridge contract address (used for layer height >= 9569214) |
+| `OLD_BRIDGE_CONTRACT_1` | `0x5acb5977f35b1A91C4fE0F4386eB669E046776F2` | Old bridge contract address (used for layer height < 9569214) |
 | `CURRENT_DATA_INTERVAL` | `300` | Monitoring interval in seconds (5 minutes) |
 | `DISCORD_WEBHOOK_URL` | (empty) | Discord webhook URL for alerts (optional) |
+
+### Bridge Contract History
+
+The system automatically uses the correct bridge contract based on Tellor Layer block height:
+- **Layer height < 9569214**: Uses `OLD_BRIDGE_CONTRACT_1` if configured, otherwise falls back to `CURRENT_BRIDGE_CONTRACT`
+- **Layer height >= 9569214**: Uses `CURRENT_BRIDGE_CONTRACT`
+
+This ensures accurate historical data collection across bridge contract migrations.
+
+**Note for single-bridge deployments**: If you're running on a chain with only one bridge contract (e.g., mainnet), simply don't set `OLD_BRIDGE_CONTRACT_1` in your `.env` file. The system will automatically use `CURRENT_BRIDGE_CONTRACT` for all heights.
 
 ### RPC Endpoints
 
