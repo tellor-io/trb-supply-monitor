@@ -18,6 +18,12 @@ Usage Examples:
     source .venv/bin/activate
 
     # Then run the collector:
+    # Collect current Tellor Layer block only (quick, no backfill)
+    python run_unified_collection.py --current-block-only
+    
+    # Collect current Tellor Layer block continuously every 1800 seconds (30 minutes)
+    python run_unified_collection.py --current-block-only --interval 1800
+
     # Collect last 24 hours of data
     python run_unified_collection.py --hours-back 24
 
@@ -793,6 +799,91 @@ def run_monitoring_mode(collector: UnifiedDataCollector, args):
         logger.info(f"Successfully completed {cycles_completed} monitoring cycles")
         sys.exit(0)
 
+def run_current_block_only(collector: UnifiedDataCollector, args) -> int:
+    """
+    Run unified data collection for the current Tellor Layer block only.
+    
+    Uses current height - 30 blocks to ensure a corresponding Ethereum block exists.
+    If --interval is specified, runs continuously at that interval.
+    
+    Args:
+        collector: UnifiedDataCollector instance
+        args: Command line arguments
+        
+    Returns:
+        1 if successful, 0 if failed
+    """
+    interval = args.interval if hasattr(args, 'interval') and args.interval else None
+    
+    if interval:
+        logger.info(f"Starting continuous current block collection with {interval}s interval")
+        logger.info("Press Ctrl+C to stop")
+    else:
+        logger.info("Collecting data for current Tellor Layer block only")
+    
+    def collect_current_block():
+        """Helper function to collect current block data."""
+        try:
+            # Get current Tellor Layer block number
+            logger.info("Getting current Tellor Layer block number...")
+            current_layer_height = collector.supply_collector.get_current_height()
+            if current_layer_height is None:
+                logger.error("Failed to get current Tellor Layer block height")
+                return 0
+            
+            # Use current height - 30 to ensure there's a corresponding Ethereum block
+            # (30 blocks * ~1.7s = ~50 second buffer)
+            target_layer_height = current_layer_height - 30
+            
+            logger.info(f"Current Tellor Layer block height: {current_layer_height}")
+            logger.info(f"Using target height: {target_layer_height} (current - 30 blocks for Ethereum sync)")
+            
+            # Collect unified data at target block
+            success = run_specific_block_collection_for_layer(collector, target_layer_height)
+            
+            if success:
+                logger.info(f"Successfully collected data for block {target_layer_height}")
+                return 1
+            else:
+                logger.error(f"Failed to collect data for block {target_layer_height}")
+                return 0
+                
+        except Exception as e:
+            logger.error(f"Error collecting current block data: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
+            return 0
+    
+    # If no interval, run once and return
+    if not interval:
+        return collect_current_block()
+    
+    # Run continuously with interval
+    global shutdown_requested
+    cycle_count = 0
+    
+    while not shutdown_requested:
+        cycle_count += 1
+        logger.info(f"\n{'='*80}")
+        logger.info(f"Collection Cycle #{cycle_count}")
+        logger.info(f"{'='*80}")
+        
+        collect_current_block()
+        
+        if shutdown_requested:
+            break
+            
+        # Sleep until next cycle
+        logger.info(f"Waiting {interval} seconds until next collection...")
+        for _ in range(interval):
+            if shutdown_requested:
+                break
+            time.sleep(1)
+    
+    logger.info("Current block collection stopped")
+    return 1
+
+
 def run_specific_block_collection(collector: UnifiedDataCollector, args) -> int:
     """
     Run unified data collection for a specific block height.
@@ -1129,6 +1220,8 @@ def main():
                            help='Remove data for range of Tellor Layer blocks (format: start-end, e.g., 1554392-1791109)')
     mode_group.add_argument('--update-reporter-power', action='store_true',
                            help='Update total reporter power for all existing unified snapshots retroactively')
+    mode_group.add_argument('--current-block-only', action='store_true',
+                           help='Collect data for current Tellor Layer block only (no backfill)')
     
     # Monitoring parameters (now unused since check_period is part of --monitor)
     parser.add_argument('--interval', type=int, default=3600,
@@ -1173,6 +1266,8 @@ def main():
             run_historic_collection(collector, args)
         elif args.bridge_historic:
             run_bridge_historic_collection(collector, args)
+        elif args.current_block_only:
+            run_current_block_only(collector, args)
         elif args.eth_block:
             run_specific_block_collection(collector, args)
         elif args.layer_block:
