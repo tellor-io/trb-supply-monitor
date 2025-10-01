@@ -633,8 +633,29 @@ async def estimate_future_block_time(
     """Estimate when a future block height will be reached based on current block time data."""
     try:
         import sqlite3
+        import subprocess
+        import json
+        import os
         
-        # Get current block height and timestamp from latest snapshot
+        # FIRST: Get the REAL-TIME current block height from layerd status
+        real_time_height = None
+        layerd_path = './layerd'
+        tellor_layer_rpc_url = os.getenv('TELLOR_LAYER_RPC_URL', 'http://localhost:26657')
+        
+        try:
+            cmd = [layerd_path, 'status', '--output', 'json', '--node', tellor_layer_rpc_url]
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
+            
+            if result.returncode == 0:
+                status_data = json.loads(result.stdout)
+                real_time_height = int(status_data['sync_info']['latest_block_height'])
+                logger.info(f"Got real-time height from layerd status: {real_time_height}")
+            else:
+                logger.warning(f"layerd status failed: {result.stderr}")
+        except Exception as e:
+            logger.warning(f"Could not get real-time height from layerd: {e}")
+        
+        # Get current block height and timestamp from latest snapshot (for timestamp reference)
         with sqlite3.connect(db.db_path) as conn:
             cursor = conn.execute('''
                 SELECT 
@@ -653,9 +674,28 @@ async def estimate_future_block_time(
             if not latest_row:
                 raise HTTPException(status_code=404, detail="No current block data available")
             
-            current_height = latest_row[0]
-            current_timestamp = latest_row[1]
-            current_datetime = latest_row[2]
+            db_height = latest_row[0]
+            db_timestamp = latest_row[1]
+            db_datetime = latest_row[2]
+        
+        # Use real-time height if available, otherwise fall back to database height
+        if real_time_height is not None:
+            current_height = real_time_height
+            # Estimate the current timestamp based on blocks elapsed since database snapshot
+            blocks_since_snapshot = current_height - db_height
+            # Use a conservative 1.7 second average for this small adjustment
+            estimated_time_diff = blocks_since_snapshot * 1.7
+            current_timestamp = db_timestamp + int(estimated_time_diff)
+            from datetime import timezone
+            current_datetime = datetime.fromtimestamp(current_timestamp, tz=timezone.utc).strftime('%Y-%m-%d %H:%M:%S')
+            data_source_note = f"real-time (layerd status: {current_height}, db snapshot: {db_height})"
+        else:
+            # Fallback to database height
+            current_height = db_height
+            current_timestamp = db_timestamp
+            current_datetime = db_datetime
+            data_source_note = "database snapshot (WARNING: may be outdated)"
+            logger.warning("Using database snapshot height - estimation may be inaccurate")
         
         # Validate target height
         if target_height <= current_height:
@@ -742,7 +782,7 @@ async def estimate_future_block_time(
             "target_height": target_height,
             "blocks_remaining": blocks_remaining,
             "avg_block_time_seconds": round(avg_block_time, 3),
-            "data_source": data_source,
+            "data_source": f"{data_source} | Height: {data_source_note}",
             "total_blocks_analyzed": total_blocks_analyzed,
             "seconds_until": round(seconds_until, 1),
             "time_until_formatted": format_time_until(seconds_until),
