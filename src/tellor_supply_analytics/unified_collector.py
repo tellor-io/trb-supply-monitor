@@ -50,8 +50,12 @@ except ImportError:
 
 # Configuration
 ETHEREUM_RPC_URL = os.getenv('ETHEREUM_RPC_URL', 'https://rpc.sepolia.org')
-SEPOLIA_TRB_CONTRACT = os.getenv('SEPOLIA_TRB_CONTRACT', '0x80fc34a2f9FfE86F41580F47368289C402DEc660')
-SEPOLIA_BRIDGE_CONTRACT = os.getenv('SEPOLIA_BRIDGE_CONTRACT', '0x5acb5977f35b1A91C4fE0F4386eB669E046776F2')
+TRB_CONTRACT = os.getenv('TRB_CONTRACT')
+CURRENT_BRIDGE_CONTRACT = os.getenv('CURRENT_BRIDGE_CONTRACT')
+OLD_BRIDGE_CONTRACT_1 = os.getenv('OLD_BRIDGE_CONTRACT_1')
+
+# Bridge contract transition height
+BRIDGE_CONTRACT_TRANSITION_HEIGHT = 9569214
 
 # Bridge CSV configuration with environment variable support
 BRIDGE_DEPOSITS_CSV_PATH = os.getenv('BRIDGE_DEPOSITS_CSV_PATH', 'example_bridge_deposits.csv')
@@ -67,6 +71,28 @@ ERC20_ABI = [
         "type": "function"
     }
 ]
+
+
+def get_bridge_contract_for_height(layer_height: Optional[int]) -> str:
+    """
+    Determine which bridge contract to use based on Tellor Layer height.
+    
+    Args:
+        layer_height: Tellor Layer block height, or None to use current contract
+        
+    Returns:
+        Bridge contract address to use
+    """
+    # If no layer height provided, use current contract
+    if layer_height is None or layer_height >= BRIDGE_CONTRACT_TRANSITION_HEIGHT:
+        return CURRENT_BRIDGE_CONTRACT
+    
+    # For heights before transition, use old contract if available, otherwise fall back to current
+    if OLD_BRIDGE_CONTRACT_1 and OLD_BRIDGE_CONTRACT_1.strip():
+        return OLD_BRIDGE_CONTRACT_1
+    else:
+        logger.warning(f"OLD_BRIDGE_CONTRACT_1 not configured, using CURRENT_BRIDGE_CONTRACT for layer height {layer_height}")
+        return CURRENT_BRIDGE_CONTRACT
 
 
 class UnifiedDataCollector:
@@ -106,10 +132,10 @@ class UnifiedDataCollector:
         if self.w3:
             try:
                 self.trb_contract = self.w3.eth.contract(
-                    address=Web3.to_checksum_address(SEPOLIA_TRB_CONTRACT),
+                    address=Web3.to_checksum_address(TRB_CONTRACT),
                     abi=ERC20_ABI
                 )
-                logger.info(f"Initialized TRB contract: {SEPOLIA_TRB_CONTRACT}")
+                logger.info(f"Initialized TRB contract: {TRB_CONTRACT}")
             except Exception as e:
                 logger.error(f"Error initializing TRB contract: {e}")
                 self.trb_contract = None
@@ -285,13 +311,14 @@ class UnifiedDataCollector:
             logger.error(f"Error getting Ethereum block range: {e}")
             return []
     
-    def collect_bridge_data_for_block(self, block_number: int, block_timestamp: int) -> Optional[float]:
+    def collect_bridge_data_for_block(self, block_number: int, block_timestamp: int, layer_height: Optional[int] = None) -> Optional[float]:
         """
         Collect bridge balance data for a specific Ethereum block.
         
         Args:
             block_number: Ethereum block number
             block_timestamp: Ethereum block timestamp
+            layer_height: Tellor Layer block height (used to determine which bridge contract to query)
             
         Returns:
             Bridge balance in TRB, or None if failed
@@ -301,9 +328,13 @@ class UnifiedDataCollector:
             return None
             
         try:
+            # Determine which bridge contract to use based on layer height
+            bridge_contract = get_bridge_contract_for_height(layer_height)
+            logger.info(f"Using bridge contract {bridge_contract} for layer height {layer_height}")
+            
             # Get bridge balance at specific block
             balance = self.trb_contract.functions.balanceOf(
-                Web3.to_checksum_address(SEPOLIA_BRIDGE_CONTRACT)
+                Web3.to_checksum_address(bridge_contract)
             ).call(block_identifier=block_number)
             
             # Convert from wei to TRB (18 decimals)
@@ -704,7 +735,7 @@ class UnifiedDataCollector:
         
         # Collect bridge data
         logger.info("Collecting bridge balance data...")
-        bridge_balance = self.collect_bridge_data_for_block(eth_block_number, eth_timestamp)
+        bridge_balance = self.collect_bridge_data_for_block(eth_block_number, eth_timestamp, resolved_layer_height)
         if bridge_balance is None:
             # For historical data, calculate bridge balance from CSV files
             bridge_balance = self.calculate_historical_bridge_balance(eth_timestamp)

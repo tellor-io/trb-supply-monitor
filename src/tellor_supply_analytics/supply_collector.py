@@ -58,10 +58,14 @@ logger = logging.getLogger(__name__)
 TELLOR_LAYER_RPC_URL = os.getenv('TELLOR_LAYER_RPC_URL')
 LAYER_GRPC_URL = os.getenv('LAYER_GRPC_URL')
 ETHEREUM_RPC_URL = os.getenv('ETHEREUM_RPC_URL', 'https://rpc.sepolia.org')
-SEPOLIA_TRB_CONTRACT = os.getenv('SEPOLIA_TRB_CONTRACT', '0x80fc34a2f9FfE86F41580F47368289C402DEc660')
-SEPOLIA_BRIDGE_CONTRACT = os.getenv('SEPOLIA_BRIDGE_CONTRACT', '0x5acb5977f35b1A91C4fE0F4386eB669E046776F2')
+TRB_CONTRACT = os.getenv('TRB_CONTRACT')
+CURRENT_BRIDGE_CONTRACT = os.getenv('CURRENT_BRIDGE_CONTRACT')
+OLD_BRIDGE_CONTRACT_1 = os.getenv('OLD_BRIDGE_CONTRACT_1')
 CURRENT_DATA_INTERVAL = int(os.getenv('CURRENT_DATA_INTERVAL', '300'))  # Default 5 minutes (300 seconds)
 DISCORD_WEBHOOK_URL = os.getenv('DISCORD_WEBHOOK_URL', '')  # Discord webhook URL for alerts
+
+# Bridge contract transition height
+BRIDGE_CONTRACT_TRANSITION_HEIGHT = 9569214
 
 # CSV Configuration
 CSV_FILE = 'supply_data.csv'
@@ -87,6 +91,28 @@ ERC20_ABI = [
         "type": "function"
     }
 ]
+
+
+def get_bridge_contract_for_height(layer_height: Optional[int]) -> str:
+    """
+    Determine which bridge contract to use based on Tellor Layer height.
+    
+    Args:
+        layer_height: Tellor Layer block height, or None to use current contract
+        
+    Returns:
+        Bridge contract address to use
+    """
+    # If no layer height provided, use current contract
+    if layer_height is None or layer_height >= BRIDGE_CONTRACT_TRANSITION_HEIGHT:
+        return CURRENT_BRIDGE_CONTRACT
+    
+    # For heights before transition, use old contract if available, otherwise fall back to current
+    if OLD_BRIDGE_CONTRACT_1 and OLD_BRIDGE_CONTRACT_1.strip():
+        return OLD_BRIDGE_CONTRACT_1
+    else:
+        logger.warning(f"OLD_BRIDGE_CONTRACT_1 not configured, using CURRENT_BRIDGE_CONTRACT for layer height {layer_height}")
+        return CURRENT_BRIDGE_CONTRACT
 
 
 class SupplyDataCollector:
@@ -135,10 +161,10 @@ class SupplyDataCollector:
         if self.w3:
             try:
                 self.trb_contract = self.w3.eth.contract(
-                    address=Web3.to_checksum_address(SEPOLIA_TRB_CONTRACT),
+                    address=Web3.to_checksum_address(TRB_CONTRACT),
                     abi=ERC20_ABI
                 )
-                logger.info(f"Initialized TRB contract: {SEPOLIA_TRB_CONTRACT}")
+                logger.info(f"Initialized TRB contract: {TRB_CONTRACT}")
             except Exception as e:
                 logger.error(f"Error initializing TRB contract: {e}")
                 self.trb_contract = None
@@ -351,12 +377,13 @@ class SupplyDataCollector:
             logger.error(f"Error parsing staking pool data: {e}")
             return None
     
-    def get_bridge_balance(self, block_number: Optional[int] = None) -> Optional[Tuple[int, int, str, float]]:
+    def get_bridge_balance(self, block_number: Optional[int] = None, layer_height: Optional[int] = None) -> Optional[Tuple[int, int, str, float]]:
         """
         Goal 3: Get TRB balance in bridge contract at specific block.
         
         Args:
             block_number: Ethereum block number, or None for latest
+            layer_height: Tellor Layer block height (used to determine which bridge contract to query)
             
         Returns:
             Tuple of (block_number, timestamp, datetime_str, balance_trb) or None if failed
@@ -376,9 +403,13 @@ class SupplyDataCollector:
             timestamp = int(block.get('timestamp', 0))
             datetime_str = datetime.fromtimestamp(timestamp, tz=timezone.utc).isoformat()
             
+            # Determine which bridge contract to use based on layer height
+            bridge_contract = get_bridge_contract_for_height(layer_height)
+            logger.info(f"Using bridge contract {bridge_contract} for layer height {layer_height}")
+            
             # Get bridge balance
             balance = self.trb_contract.functions.balanceOf(
-                Web3.to_checksum_address(SEPOLIA_BRIDGE_CONTRACT)
+                Web3.to_checksum_address(bridge_contract)
             ).call(block_identifier=block_number)
             
             # Convert from wei to TRB (18 decimals)
@@ -395,8 +426,16 @@ class SupplyDataCollector:
         """Collect current supply data from all sources."""
         logger.info("Collecting current supply data...")
         
+        # Get current Tellor Layer block height from the layerd CLI first
+        # so we can use it to determine the correct bridge contract
+        current_height = self.get_current_height()
+        if current_height is None:
+            logger.error("Failed to get current height from Tellor Layer")
+            return None
+        
         # Get current Ethereum block info (optional, fallback if unavailable)
-        eth_data = self.get_bridge_balance()
+        # Pass the layer height to determine which bridge contract to use
+        eth_data = self.get_bridge_balance(layer_height=current_height)
         if eth_data:
             eth_block, eth_timestamp, eth_datetime, bridge_balance = eth_data
         else:
@@ -407,12 +446,6 @@ class SupplyDataCollector:
             eth_timestamp = int(time.time())
             eth_datetime = datetime.fromtimestamp(eth_timestamp, tz=timezone.utc).isoformat()
             bridge_balance = 0.0
-        
-        # Get current Tellor Layer block height from the layerd CLI
-        current_height = self.get_current_height()
-        if current_height is None:
-            logger.error("Failed to get current height from Tellor Layer")
-            return None
             
         logger.info(f"Using block height {current_height} for all queries")
         
