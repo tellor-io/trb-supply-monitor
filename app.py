@@ -640,7 +640,7 @@ async def estimate_future_block_time(
         # FIRST: Get the REAL-TIME current block height from layerd status
         real_time_height = None
         layerd_path = './layerd'
-        tellor_layer_rpc_url = os.getenv('TELLOR_LAYER_RPC_URL', 'http://localhost:26657')
+        tellor_layer_rpc_url = os.getenv('TELLOR_LAYER_RPC_URL')
         
         try:
             cmd = [layerd_path, 'status', '--output', 'json', '--node', tellor_layer_rpc_url]
