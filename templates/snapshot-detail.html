@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Snapshot Detail - Tellor Supply Analytics</title>
+    <!-- Static assets use root_path for serving under nginx location prefixes -->
+    <link rel="stylesheet" href="{{ root_path }}/static/css/unified-style-template.css">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+</head>
+<body>
+    <div class="app">
+        <!-- Navigation -->
+        <nav class="nav">
+            <ul class="nav-list">
+                <li><a href="{{ root_path }}/" class="nav-link">
+                    <i class="fas fa-arrow-left"></i> Back to Dashboard
+                </a></li>
+            </ul>
+        </nav>
+
+        <!-- Main Content -->
+        <main class="main">
+            <!-- Snapshot Overview Section -->
+            <section class="card mb-xl" id="snapshotOverview">
+                <div class="card-header">
+                    <h2>Snapshot Overview</h2>
+                    <span id="snapshotTimestamp" class="text-sm text-muted"></span>
+                </div>
+                <div class="card-body">
+                    <div class="snapshot-list">
+                        <!-- Block Information -->
+                        <div class="snapshot-section">
+                            <h3 class="snapshot-section-title">Block Information</h3>
+                            <ul class="snapshot-data-list">
+                                <li class="snapshot-data-item">
+                                    <span class="snapshot-label">Ethereum Block Number:</span>
+                                    <span class="snapshot-value font-mono" id="ethBlockNumber">--</span>
+                                </li>
+                                <li class="snapshot-data-item">
+                                    <span class="snapshot-label">Ethereum Block Time:</span>
+                                    <span class="snapshot-value font-mono text-sm" id="ethBlockTime">--</span>
+                                </li>
+                                <li class="snapshot-data-item">
+                                    <span class="snapshot-label">Tellor Layer Block Height:</span>
+                                    <span class="snapshot-value font-mono" id="layerBlockHeight">--</span>
+                                </li>
+                                <li class="snapshot-data-item">
+                                    <span class="snapshot-label">Tellor Layer Block Time:</span>
+                                    <span class="snapshot-value font-mono text-sm" id="layerBlockTime">--</span>
+                                </li>
+                            </ul>
+                        </div>
+
+                        <!-- Supply Metrics -->
+                        <div class="snapshot-section">
+                            <h3 class="snapshot-section-title">Supply Metrics</h3>
+                            <ul class="snapshot-data-list">
+                                <li class="snapshot-data-item">
+                                    <span class="snapshot-label">Bridge Balance:</span>
+                                    <span class="snapshot-value text-primary font-mono" id="bridgeBalance">-- TRB</span>
+                                </li>
+                                <li class="snapshot-data-item">
+                                    <span class="snapshot-label">Layer Total Supply:</span>
+                                    <span class="snapshot-value text-secondary font-mono" id="layerSupply">-- TRB</span>
+                                </li>
+                                <li class="snapshot-data-item">
+                                    <span class="snapshot-label">Free Floating TRB:</span>
+                                    <span class="snapshot-value text-tertiary font-mono" id="freeFloating">-- TRB</span>
+                                </li>
+                                <li class="snapshot-data-item">
+                                    <span class="snapshot-label">Total Balance:</span>
+                                    <span class="snapshot-value text-accent font-mono" id="totalBalance">-- TRB</span>
+                                </li>
+                            </ul>
+                        </div>
+
+                        <!-- Staking & Reporter Metrics -->
+                        <div class="snapshot-section">
+                            <h3 class="snapshot-section-title">Staking & Reporter Metrics</h3>
+                            <ul class="snapshot-data-list">
+                                <li class="snapshot-data-item">
+                                    <span class="snapshot-label">Bonded Tokens:</span>
+                                    <span class="snapshot-value font-mono" id="bondedTokens">-- TRB</span>
+                                </li>
+                                <li class="snapshot-data-item">
+                                    <span class="snapshot-label">Not Bonded Tokens:</span>
+                                    <span class="snapshot-value font-mono" id="notBondedTokens">-- TRB</span>
+                                </li>
+                                <li class="snapshot-data-item">
+                                    <span class="snapshot-label">Total Reporter Power:</span>
+                                    <span class="snapshot-value text-purple font-mono" id="reporterPower">--</span>
+                                </li>
+                                <li class="snapshot-data-item">
+                                    <span class="snapshot-label">Active Addresses:</span>
+                                    <span class="snapshot-value font-mono">
+                                        <span id="activeAddresses">--</span>
+                                        <span class="text-muted text-sm">of <span id="totalAddresses">--</span> total</span>
+                                    </span>
+                                </li>
+                            </ul>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Account Balances Section -->
+            <section class="card" id="balancesSection">
+                <div class="card-header">
+                    <div class="flex justify-between items-center">
+                        <h2>Account Balances at This Height</h2>
+                        <div class="flex gap-sm items-center">
+                            <input
+                                type="text"
+                                id="searchInput"
+                                class="form-input"
+                                placeholder="Search by address..."
+                                style="width: 300px;"
+                            >
+                            <select id="accountTypeFilter" class="form-input" style="width: auto;">
+                                <option value="">All Account Types</option>
+                                <option value="validator">Validators</option>
+                                <option value="reporter">Reporters</option>
+                                <option value="user">Users</option>
+                                <option value="module">Modules</option>
+                            </select>
+                            <button class="btn btn-sm btn-secondary" id="exportBalancesBtn">
+                                <i class="fas fa-download"></i>
+                                Export CSV
+                            </button>
+                        </div>
+                    </div>
+                    <div class="mt-sm text-sm text-muted">
+                        Showing <span id="displayedCount">0</span> of <span id="totalBalancesCount">0</span> addresses
+                    </div>
+                </div>
+                <div class="card-body">
+                    <div class="table-container" style="max-height: 600px; overflow-y: auto;">
+                        <table class="data-table" id="balancesTable">
+                            <thead style="position: sticky; top: 0; background: var(--bg-secondary);">
+                                <tr>
+                                    <th>Address</th>
+                                    <th>Account Type</th>
+                                    <th>Balance (loya)</th>
+                                    <th>Balance (TRB)</th>
+                                    <th>Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody id="balancesTableBody">
+                                <tr>
+                                    <td colspan="5" class="text-center">Loading balance data...</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </section>
+        </main>
+    </div>
+
+    <!-- Loading Overlay -->
+    <div class="loading-overlay hidden" id="loadingOverlay">
+        <div class="spinner"></div>
+        <div class="loading-text">Loading snapshot details...</div>
+    </div>
+
+    <script>
+        // Set the root path and eth_timestamp for API calls
+        window.ROOT_PATH = "{{ root_path }}";
+        window.ETH_TIMESTAMP = {{ eth_timestamp }};
+    </script>
+    <script src="{{ root_path }}/static/js/snapshot-detail.js"></script>
+</body>
+</html>

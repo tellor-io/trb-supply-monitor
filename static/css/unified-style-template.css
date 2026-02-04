@@ -1262,7 +1262,7 @@ h4 { font-size: 1rem; color: var(--text-tertiary); }
     .compact-stats {
         flex-direction: column;
     }
-    
+
     .compact-stat-item {
         flex: none;
         min-width: auto;
@@ -1270,8 +1270,124 @@ h4 { font-size: 1rem; color: var(--text-tertiary); }
         justify-content: space-between;
         text-align: left;
     }
-    
+
     .compact-stat-value {
         margin-left: var(--spacing-sm);
+    }
+}
+
+/* ========================================
+   CLICKABLE TABLE ROWS
+   ======================================== */
+
+.clickable-row {
+    transition: all 0.2s ease;
+}
+
+.clickable-row:hover {
+    background: rgba(0, 255, 136, 0.15) !important;
+    transform: scale(1.01);
+    box-shadow: 0 2px 8px rgba(0, 255, 136, 0.2);
+}
+
+.clickable-row:active {
+    transform: scale(0.99);
+}
+
+/* Indicate clickability with a subtle visual cue */
+.clickable-row td:first-child::before {
+    content: '→';
+    margin-right: 0.5rem;
+    color: var(--primary-green);
+    opacity: 0;
+    transition: opacity 0.2s ease;
+}
+
+.clickable-row:hover td:first-child::before {
+    opacity: 1;
+}
+
+/* ========================================
+   SNAPSHOT DETAIL PAGE - LIST LAYOUT
+   ======================================== */
+
+.snapshot-list {
+    display: flex;
+    flex-direction: column;
+    gap: var(--spacing-xl);
+}
+
+.snapshot-section {
+    border-left: 3px solid var(--primary-green);
+    padding-left: var(--spacing-lg);
+}
+
+.snapshot-section-title {
+    font-size: 1.1rem;
+    font-weight: 600;
+    color: var(--primary-green);
+    margin-bottom: var(--spacing-md);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+
+.snapshot-data-list {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+    display: flex;
+    flex-direction: column;
+    gap: var(--spacing-sm);
+}
+
+.snapshot-data-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: var(--spacing-sm) var(--spacing-md);
+    background: rgba(255, 255, 255, 0.02);
+    border-radius: 4px;
+    transition: background 0.2s ease;
+}
+
+.snapshot-data-item:hover {
+    background: rgba(255, 255, 255, 0.05);
+}
+
+.snapshot-label {
+    color: var(--text-muted);
+    font-size: 0.95rem;
+    font-weight: 500;
+}
+
+.snapshot-value {
+    color: #ffffff;
+    font-size: 1rem;
+    font-weight: 600;
+    text-align: right;
+}
+
+/* Responsive layout for snapshot sections */
+@media (min-width: 1200px) {
+    .snapshot-list {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: var(--spacing-xl);
+    }
+}
+
+@media (max-width: 768px) {
+    .snapshot-section {
+        padding-left: var(--spacing-md);
+    }
+
+    .snapshot-data-item {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: var(--spacing-xs);
+    }
+
+    .snapshot-value {
+        text-align: left;
     }
 }
