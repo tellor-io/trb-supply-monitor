@@ -311,12 +311,12 @@ class UnifiedDataCollector:
             logger.error(f"Error getting Ethereum block range: {e}")
             return []
     
-    def collect_bridge_data_for_block(self, block_number: int, block_timestamp: int, layer_height: Optional[int] = None) -> Optional[float]:
+    def collect_bridge_data_for_block(self, block_number: Optional[int], block_timestamp: int, layer_height: Optional[int] = None) -> Optional[float]:
         """
         Collect bridge balance data for a specific Ethereum block.
         
         Args:
-            block_number: Ethereum block number
+            block_number: Ethereum block number, or None for latest block
             block_timestamp: Ethereum block timestamp
             layer_height: Tellor Layer block height (used to determine which bridge contract to query)
             
@@ -332,19 +332,22 @@ class UnifiedDataCollector:
             bridge_contract = get_bridge_contract_for_height(layer_height)
             logger.info(f"Using bridge contract {bridge_contract} for layer height {layer_height}")
             
-            # Get bridge balance at specific block
+            # Get bridge balance at specific block (or latest if block_number is None)
+            block_id = block_number if block_number is not None else 'latest'
             balance = self.trb_contract.functions.balanceOf(
                 Web3.to_checksum_address(bridge_contract)
-            ).call(block_identifier=block_number)
+            ).call(block_identifier=block_id)
             
             # Convert from wei to TRB (18 decimals)
             balance_trb = balance / (10 ** 18)
             
-            logger.info(f"Bridge balance at ETH block {block_number}: {balance_trb:.6f} TRB")
+            block_desc = block_number if block_number is not None else "latest"
+            logger.info(f"Bridge balance at ETH block {block_desc}: {balance_trb:.6f} TRB")
             return balance_trb
             
         except Exception as e:
-            logger.error(f"Error getting bridge balance for block {block_number}: {e}")
+            block_desc = block_number if block_number is not None else "latest"
+            logger.error(f"Error getting bridge balance for block {block_desc}: {e}")
             return None
     
     def calculate_historical_bridge_balance(self, target_timestamp: int, 
@@ -735,9 +738,26 @@ class UnifiedDataCollector:
         
         # Collect bridge data
         logger.info("Collecting bridge balance data...")
-        bridge_balance = self.collect_bridge_data_for_block(eth_block_number, eth_timestamp, resolved_layer_height)
+        
+        # Determine if we should query Ethereum directly or use CSV
+        # Check if the timestamp is recent enough for our RPC node (within last hour)
+        from datetime import datetime, timezone, timedelta
+        current_time = datetime.now(timezone.utc)
+        target_time = datetime.fromtimestamp(eth_timestamp, tz=timezone.utc)
+        time_diff = (current_time - target_time).total_seconds()
+        
+        # If data is recent (within 1 hour), query latest Ethereum block directly
+        if time_diff <= 3600:
+            logger.info(f"Recent data (age: {time_diff:.0f}s), querying latest Ethereum block for bridge balance")
+            bridge_balance = self.collect_bridge_data_for_block(None, eth_timestamp, resolved_layer_height)
+        else:
+            # For historical data, try to query the specific block first
+            logger.info(f"Historical data (age: {time_diff:.0f}s), attempting to query specific Ethereum block")
+            bridge_balance = self.collect_bridge_data_for_block(eth_block_number, eth_timestamp, resolved_layer_height)
+        
+        # If RPC query failed, fall back to CSV calculation
         if bridge_balance is None:
-            # For historical data, calculate bridge balance from CSV files
+            logger.info("Ethereum RPC query failed, calculating bridge balance from CSV files")
             bridge_balance = self.calculate_historical_bridge_balance(eth_timestamp)
             if bridge_balance is None:
                 logger.error("Failed to calculate historical bridge balance from CSV files")

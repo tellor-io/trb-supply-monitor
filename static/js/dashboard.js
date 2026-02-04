@@ -132,11 +132,16 @@ class HistoricalDashboard {
                 console.warn('Snapshot missing timestamp:', snapshot);
                 return ''; // Skip this row
             }
-            
+
             const datetime = new Date(timestamp * 1000);
-            
+
             return `
-                <tr title="ETH Block: ${snapshot.eth_block_number || 'N/A'}" data-timestamp="${timestamp}" id="row-${timestamp}">
+                <tr title="Click to view details | ETH Block: ${snapshot.eth_block_number || 'N/A'}"
+                    data-timestamp="${timestamp}"
+                    id="row-${timestamp}"
+                    class="clickable-row"
+                    onclick="window.location.href='${this.apiBase}/snapshot/${timestamp}';"
+                    style="cursor: pointer;">
                     <td class="font-mono text-xs">
                         ${datetime.toLocaleString()}
                         <br><small class="text-muted">${datetime.toISOString().slice(0, 19)}Z</small>

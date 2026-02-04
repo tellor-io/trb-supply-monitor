@@ -186,6 +186,29 @@ async def block_time_analytics(request: Request):
         """)
 
 
+@app.get("/snapshot/{eth_timestamp}", response_class=HTMLResponse)
+async def snapshot_detail(request: Request, eth_timestamp: int):
+    """Serve the snapshot detail page for a specific Ethereum block timestamp."""
+    html_file = Path("templates/snapshot-detail.html")
+    if html_file.exists():
+        return templates.TemplateResponse("snapshot-detail.html", {
+            "request": request,
+            "root_path": request.scope.get("root_path", ""),
+            "eth_timestamp": eth_timestamp
+        })
+    else:
+        return HTMLResponse(f"""
+        <html>
+            <head><title>Snapshot Detail</title></head>
+            <body style="font-family: Arial, sans-serif; margin: 40px;">
+                <h1>Snapshot Detail</h1>
+                <p>Snapshot detail page is initializing... Please ensure templates/snapshot-detail.html exists.</p>
+                <p><a href="/" style="color: #007bff;">Back to Dashboard</a></p>
+            </body>
+        </html>
+        """)
+
+
 @app.get("/api/summary")
 async def get_summary():
     """Get summary of latest balance collection."""
