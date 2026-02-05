@@ -582,17 +582,11 @@ class UnifiedDataCollector:
                 logger.warning(f"Failed to get reporter power for height {layer_height}, using 0")
                 total_reporter_power = 0
             
-            # Find the corresponding Ethereum block number for this timestamp
-            eth_block_number = self.find_ethereum_block_for_timestamp(eth_timestamp)
-            if eth_block_number is None:
-                logger.warning(f"Could not find Ethereum block for timestamp {eth_timestamp}, using 0")
-                eth_block_number = 0
-            
-            # Create historical data structure similar to current data
+            # Create historical data structure
+            # Note: eth_block_number is passed separately to save_unified_snapshot,
+            # so we don't need to include it here. The caller already resolved the
+            # correct Ethereum block for this timestamp.
             historical_data = {
-                'eth_block_number': eth_block_number,  # Now using actual ETH block mapping
-                'eth_block_timestamp': eth_timestamp,
-                'bridge_balance_trb': 0.0,
                 'layer_block_height': layer_height,
                 'layer_block_timestamp': layer_timestamp,
                 'layer_total_supply_trb': layer_supply_trb,
@@ -739,21 +733,10 @@ class UnifiedDataCollector:
         # Collect bridge data
         logger.info("Collecting bridge balance data...")
         
-        # Determine if we should query Ethereum directly or use CSV
-        # Check if the timestamp is recent enough for our RPC node (within last hour)
-        from datetime import datetime, timezone, timedelta
-        current_time = datetime.now(timezone.utc)
-        target_time = datetime.fromtimestamp(eth_timestamp, tz=timezone.utc)
-        time_diff = (current_time - target_time).total_seconds()
-        
-        # If data is recent (within 1 hour), query latest Ethereum block directly
-        if time_diff <= 3600:
-            logger.info(f"Recent data (age: {time_diff:.0f}s), querying latest Ethereum block for bridge balance")
-            bridge_balance = self.collect_bridge_data_for_block(None, eth_timestamp, resolved_layer_height)
-        else:
-            # For historical data, try to query the specific block first
-            logger.info(f"Historical data (age: {time_diff:.0f}s), attempting to query specific Ethereum block")
-            bridge_balance = self.collect_bridge_data_for_block(eth_block_number, eth_timestamp, resolved_layer_height)
+        # Always query bridge balance at the specific Ethereum block for accuracy
+        # This ensures temporal consistency between Layer data and Ethereum bridge balance
+        logger.info(f"Querying bridge balance at specific ETH block {eth_block_number}...")
+        bridge_balance = self.collect_bridge_data_for_block(eth_block_number, eth_timestamp, resolved_layer_height)
         
         # If RPC query failed, fall back to CSV calculation
         if bridge_balance is None:
