@@ -677,8 +677,8 @@ def run_specific_block_collection_for_layer(collector: UnifiedDataCollector, lay
         # Find the corresponding Ethereum block number for this timestamp
         eth_block_number = collector.find_ethereum_block_for_timestamp(layer_timestamp)
         if eth_block_number is None:
-            logger.warning(f"Could not find corresponding Ethereum block for layer timestamp {layer_timestamp}, using 0")
-            eth_block_number = 0
+            logger.error(f"Could not find corresponding Ethereum block for layer timestamp {layer_timestamp}")
+            return False
         
         # Check if we already have complete data for this timestamp
         existing_snapshot = collector.db.get_unified_snapshot_by_eth_timestamp(layer_timestamp)
@@ -868,7 +868,10 @@ def run_current_block_only(collector: UnifiedDataCollector, args) -> int:
         logger.info(f"Collection Cycle #{cycle_count}")
         logger.info(f"{'='*80}")
         
-        collect_current_block()
+        result = collect_current_block()
+        if result == 0:
+            logger.critical("Collection failed - exiting so service manager can restart")
+            sys.exit(1)
         
         if shutdown_requested:
             break
