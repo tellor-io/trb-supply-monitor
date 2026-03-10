@@ -98,12 +98,18 @@ def setup_logging(debug: bool = False):
 
 # Global variable for graceful shutdown
 shutdown_requested = False
+interrupt_count = 0
 
 def signal_handler(signum, frame):
-    """Handle shutdown signals gracefully."""
-    global shutdown_requested
-    logger.info("Shutdown signal received, stopping gracefully...")
+    """Handle shutdown signals with fast interrupt semantics."""
+    global shutdown_requested, interrupt_count
+    interrupt_count += 1
     shutdown_requested = True
+    if interrupt_count == 1:
+        logger.warning("Interrupt received, stopping now...")
+        raise KeyboardInterrupt
+    logger.error("Second interrupt received, forcing immediate exit")
+    os._exit(130)
 
 # Register signal handlers
 signal.signal(signal.SIGINT, signal_handler)
@@ -116,7 +122,7 @@ def check_shutdown():
     """Check if shutdown was requested and exit if so."""
     if shutdown_requested:
         logger.info("Shutdown requested, exiting...")
-        sys.exit(0)
+        raise KeyboardInterrupt
 
 # Bridge CSV configuration with environment variable support
 def get_bridge_csv_paths():
@@ -378,6 +384,9 @@ def run_historic_collection(collector: UnifiedDataCollector, args):
                     
                     def get_latest_height(self):
                         return self._latest_height
+
+                    def get_earliest_height(self):
+                        return self._earliest_height
                 
                 run_historic_collection._block_finder = OptimizedBlockFinder(
                     TELLOR_LAYER_RPC_URL, latest_height, earliest_height
@@ -1029,6 +1038,10 @@ def run_remove_and_rerun_range(collector: 'UnifiedDataCollector', args):
     
     if start_block > end_block:
         start_block, end_block = end_block, start_block  # Swap if order is incorrect
+
+    if not preflight_validate_layer_range_access(collector, start_block, end_block):
+        logger.error("Preflight validation failed. Aborting remove-and-rerun before making any changes.")
+        sys.exit(1)
     
     logger.info(f"Scanning for data between Tellor Layer blocks {start_block} and {end_block} (inclusive)")
     
@@ -1089,6 +1102,47 @@ def run_remove_and_rerun_range(collector: 'UnifiedDataCollector', args):
     
     logger.info(f"Remove and rerun completed: {successful_count} successful, {failed_count} failed")
     print(f"\nOperation completed: {successful_count} successful, {failed_count} failed")
+
+
+def preflight_validate_layer_range_access(collector: 'UnifiedDataCollector', start_block: int, end_block: int) -> bool:
+    """
+    Validate that RPC and API are reachable and have data for range boundaries.
+
+    This checks both the first and last block in the requested range against:
+    - Tellor Layer RPC (via layerd query block)
+    - Tellor Layer API endpoint (staking pool with x-cosmos-block-height)
+    """
+    boundary_blocks = (start_block, end_block)
+    logger.info("Running preflight range validation...")
+    logger.info(f"Boundary blocks to validate: start={start_block}, end={end_block}")
+
+    # 1) RPC reachability + boundary block availability
+    status_result = collector.supply_collector.run_layerd_command([
+        'status',
+        '--output', 'json',
+        '--node', TELLOR_LAYER_RPC_URL
+    ])
+    if not status_result:
+        logger.error("RPC preflight failed: unable to fetch node status")
+        return False
+
+    for height in boundary_blocks:
+        block_info = collector.supply_collector.get_block_info(height)
+        if not block_info:
+            logger.error(f"RPC preflight failed: no block data returned for height {height}")
+            return False
+        logger.info(f"RPC preflight ok for block {height}: timestamp={block_info[1]}")
+
+    # 2) API reachability + boundary block availability
+    for height in boundary_blocks:
+        staking_pool = collector.supply_collector.get_staking_pool(height)
+        if staking_pool is None:
+            logger.error(f"API preflight failed: no staking pool data returned for height {height}")
+            return False
+        logger.info(f"API preflight ok for block {height}: bonded={staking_pool[1]}, not_bonded={staking_pool[0]}")
+
+    logger.info("Preflight range validation passed")
+    return True
 
 def run_remove_range(collector: 'UnifiedDataCollector', args):
     """Remove data for a range of Tellor Layer block heights."""
@@ -1284,6 +1338,9 @@ def main():
         else:
             run_single_collection(collector, args)
             
+    except KeyboardInterrupt:
+        logger.warning("Interrupted by user")
+        sys.exit(130)
     except Exception as e:
         logger.error(f"Error running unified collection: {e}")
         sys.exit(1)

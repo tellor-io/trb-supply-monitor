@@ -56,7 +56,7 @@ logger = logging.getLogger(__name__)
 
 # Configuration
 TELLOR_LAYER_RPC_URL = os.getenv('TELLOR_LAYER_RPC_URL')
-LAYER_GRPC_URL = os.getenv('LAYER_GRPC_URL')
+LAYER_API_URL = os.getenv('LAYER_API_URL')
 ETHEREUM_RPC_URL = os.getenv('ETHEREUM_RPC_URL', 'https://rpc.sepolia.org')
 TRB_CONTRACT = os.getenv('TRB_CONTRACT')
 CURRENT_BRIDGE_CONTRACT = os.getenv('CURRENT_BRIDGE_CONTRACT')
@@ -348,7 +348,11 @@ class SupplyDataCollector:
             Tuple of (not_bonded_tokens, bonded_tokens) in TRB units or None if failed
         """
         try:
-            url = f"{LAYER_GRPC_URL}/cosmos/staking/v1beta1/pool"
+            if not LAYER_API_URL:
+                logger.error("LAYER_API_URL is not configured")
+                return None
+
+            url = f"{LAYER_API_URL.rstrip('/')}/cosmos/staking/v1beta1/pool"
             headers = {}
             
             if height is not None:
