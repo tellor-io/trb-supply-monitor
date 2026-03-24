@@ -33,7 +33,7 @@ logger = logging.getLogger(__name__)
 
 # Configuration from environment
 TELLOR_LAYER_RPC_URL = os.getenv('TELLOR_LAYER_RPC_URL')
-LAYER_GRPC_URL = os.getenv('LAYER_GRPC_URL')
+LAYER_API_URL = os.getenv('LAYER_API_URL')
 ETHEREUM_RPC_URL = os.getenv('ETHEREUM_RPC_URL')
 
 def check_tellor_layer_rpc() -> bool:
@@ -128,19 +128,23 @@ def check_ethereum_rpc() -> bool:
         logger.error(f"Failed to connect to Ethereum RPC: {e}")
         return False
 
-def check_tellor_layer_grpc() -> bool:
+def check_tellor_layer_api() -> bool:
     """
-    Check if Tellor Layer GRPC endpoint is responding.
+    Check if Tellor Layer API endpoint is responding.
     
     Returns:
-        True if GRPC is responding, False otherwise
+        True if API is responding, False otherwise
     """
     try:
-        logger.info(f"Checking Tellor Layer GRPC connection: {LAYER_GRPC_URL}")
+        if not LAYER_API_URL:
+            logger.error("LAYER_API_URL is not configured")
+            return False
+
+        logger.info(f"Checking Tellor Layer API connection: {LAYER_API_URL}")
         
-        # Try to get node info from GRPC endpoint
+        # Try to get node info from API endpoint
         response = requests.get(
-            f"{LAYER_GRPC_URL.rstrip('/')}/cosmos/base/tendermint/v1beta1/node_info",
+            f"{LAYER_API_URL.rstrip('/')}/cosmos/base/tendermint/v1beta1/node_info",
             timeout=10
         )
         
@@ -150,17 +154,17 @@ def check_tellor_layer_grpc() -> bool:
             if node_info:
                 network = node_info.get('network', 'unknown')
                 version = node_info.get('version', 'unknown')
-                logger.info(f"Tellor Layer GRPC responding - Network: {network}, Version: {version}")
+                logger.info(f"Tellor Layer API responding - Network: {network}, Version: {version}")
                 return True
         
-        logger.error(f"Tellor Layer GRPC not responding properly. Status: {response.status_code}")
+        logger.error(f"Tellor Layer API not responding properly. Status: {response.status_code}")
         return False
         
     except requests.RequestException as e:
-        logger.error(f"Failed to connect to Tellor Layer GRPC: {e}")
+        logger.error(f"Failed to connect to Tellor Layer API: {e}")
         return False
     except Exception as e:
-        logger.error(f"Unexpected error checking Tellor Layer GRPC: {e}")
+        logger.error(f"Unexpected error checking Tellor Layer API: {e}")
         return False
 
 def perform_startup_health_checks():
@@ -191,12 +195,12 @@ def perform_startup_health_checks():
         logger.error("   This RPC is required for bridge balance queries.")
         sys.exit(1)
     
-    # Check Tellor Layer GRPC (non-critical but important)
-    if check_tellor_layer_grpc():
+    # Check Tellor Layer API (non-critical but important)
+    if check_tellor_layer_api():
         checks_passed += 1
     else:
-        logger.warning("⚠️  WARNING: Tellor Layer GRPC is not responding")
-        logger.warning(f"   URL: {LAYER_GRPC_URL}")
+        logger.warning("⚠️  WARNING: Tellor Layer API is not responding")
+        logger.warning(f"   URL: {LAYER_API_URL}")
         logger.warning("   Some balance collection features may not work properly.")
     
     logger.info(f"=== HEALTH CHECKS COMPLETED: {checks_passed}/{total_checks} PASSED ===")

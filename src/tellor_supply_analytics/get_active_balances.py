@@ -42,10 +42,10 @@ load_dotenv()
 
 # Import configuration from supply_collector if needed
 try:
-    from .supply_collector import LAYER_GRPC_URL, logger, TELLOR_LAYER_RPC_URL
+    from .supply_collector import LAYER_API_URL, logger, TELLOR_LAYER_RPC_URL
 except ImportError:
     # Fallback configuration if import fails
-    LAYER_GRPC_URL = os.getenv('LAYER_GRPC_URL')
+    LAYER_API_URL = os.getenv('LAYER_API_URL')
     TELLOR_LAYER_RPC_URL = os.getenv('TELLOR_LAYER_RPC_URL')
     
     # Configure logging
@@ -55,22 +55,22 @@ except ImportError:
     )
     logger = logging.getLogger(__name__)
 
-# Ensure LAYER_GRPC_URL is not None and properly configured
-if not LAYER_GRPC_URL:
-    LAYER_GRPC_URL = os.getenv('LAYER_GRPC_URL')
-    logger.warning(f"LAYER_GRPC_URL was None, using fallback: {LAYER_GRPC_URL}")
+# Ensure LAYER_API_URL is not None and properly configured
+if not LAYER_API_URL:
+    LAYER_API_URL = os.getenv('LAYER_API_URL')
+    logger.warning(f"LAYER_API_URL was None, using fallback: {LAYER_API_URL}")
 
 if not TELLOR_LAYER_RPC_URL:
     TELLOR_LAYER_RPC_URL = os.getenv('TELLOR_LAYER_RPC_URL')
     logger.warning(f"TELLOR_LAYER_RPC_URL was None, using fallback: {TELLOR_LAYER_RPC_URL}")
 
 # Validate URLs
-if not LAYER_GRPC_URL or not LAYER_GRPC_URL.startswith(('http://', 'https://')):
-    raise ValueError(f"Invalid LAYER_GRPC_URL? {LAYER_GRPC_URL}")
+if not LAYER_API_URL or not LAYER_API_URL.startswith(('http://', 'https://')):
+    raise ValueError(f"Invalid LAYER_API_URL: {LAYER_API_URL}")
 if not TELLOR_LAYER_RPC_URL or not TELLOR_LAYER_RPC_URL.startswith(('http://', 'https://')):
     raise ValueError(f"Invalid TELLOR_LAYER_RPC_URL? {TELLOR_LAYER_RPC_URL}")
 
-logger.info(f"Using Tellor Layer GRPC URL: {LAYER_GRPC_URL}")
+logger.info(f"Using Tellor Layer API URL: {LAYER_API_URL}")
 logger.info(f"Using Tellor Layer RPC URL: {TELLOR_LAYER_RPC_URL}")
 
 # Configuration
@@ -139,15 +139,15 @@ class EnhancedActiveBalancesCollector:
         
         # Retry up to 3 times if URLs are None
         retries = 3
-        while not LAYER_GRPC_URL and retries > 0:
-            logger.warning(f"LAYER_GRPC_URL is None, retrying in 10 seconds... ({retries} retries left)")
+        while not LAYER_API_URL and retries > 0:
+            logger.warning(f"LAYER_API_URL is None, retrying in 10 seconds... ({retries} retries left)")
             time.sleep(10)
             retries -= 1
             
-        if not LAYER_GRPC_URL:
-            raise ValueError("Failed to get LAYER_GRPC_URL after retries")
+        if not LAYER_API_URL:
+            raise ValueError("Failed to get LAYER_API_URL after retries")
             
-        self.base_url = LAYER_GRPC_URL.rstrip('/')
+        self.base_url = LAYER_API_URL.rstrip('/')
         self.accounts_endpoint = f"{self.base_url}/cosmos/auth/v1beta1/accounts"
         self.balance_endpoint_template = f"{self.base_url}/cosmos/bank/v1beta1/balances/{{}}"
         self.session = requests.Session()

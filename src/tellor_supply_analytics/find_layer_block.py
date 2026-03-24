@@ -127,6 +127,33 @@ class TellorLayerBlockFinder:
         except (KeyError, ValueError) as e:
             logger.error(f"Error parsing latest height: {e}")
             return None
+
+    def get_earliest_height(self) -> Optional[int]:
+        """
+        Get the earliest available block height from the Tellor Layer node.
+
+        Returns:
+            Earliest block height or None if failed
+        """
+        try:
+            url = f"{self.rpc_url}/status"
+            logger.debug(f"Querying status for earliest height: {url}")
+
+            response = self.session.get(url, timeout=30)
+            response.raise_for_status()
+
+            data = response.json()
+            height = int(data["result"]["sync_info"]["earliest_block_height"])
+
+            logger.info(f"Earliest Tellor Layer height: {height}")
+            return height
+
+        except requests.RequestException as e:
+            logger.error(f"Error querying earliest height: {e}")
+            return None
+        except (KeyError, ValueError) as e:
+            logger.error(f"Error parsing earliest height: {e}")
+            return None
     
     def find_block_by_timestamp(self, target_time: datetime) -> Optional[int]:
         """
@@ -152,11 +179,42 @@ class TellorLayerBlockFinder:
         if high is None:
             logger.error("Failed to get latest height")
             return None
+
+        earliest = self.get_earliest_height()
+        low = earliest if earliest is not None else 1
+        if earliest is None:
+            logger.warning("Could not resolve earliest height from node; falling back to genesis search floor")
+
+        earliest_time: Optional[datetime] = None
+        latest_time: Optional[datetime] = None
+
+        # If target is older than the earliest available block, fail fast.
+        if earliest is not None:
+            earliest_time = self.get_block_time(low)
+            if earliest_time is None:
+                logger.error(f"Failed to get timestamp for earliest available block {low}")
+                return None
+            if target_time < earliest_time:
+                logger.warning(
+                    f"Target timestamp {target_time} is older than node earliest block "
+                    f"{low} at {earliest_time}"
+                )
+                return None
+
+        # Resolve latest block timestamp as an upper-bound sanity check.
+        latest_time = self.get_block_time(high)
+        if latest_time is not None and target_time > latest_time:
+            logger.warning(
+                f"Target timestamp {target_time} is newer than latest node block "
+                f"{high} at {latest_time}; returning latest available block"
+            )
+            return high
         
-        low = 1  # Genesis block
-        
+        search_floor = low
         logger.info(f"Searching blocks {low} to {high} for timestamp {target_time}")
         
+        successful_time_reads = 0
+
         # Binary search
         while low <= high:
             # *** CRITICAL FIX: Check for shutdown signal during binary search ***
@@ -183,6 +241,7 @@ class TellorLayerBlockFinder:
                     # Split the search space
                     high = mid - 1
                 continue
+            successful_time_reads += 1
             
             if mid_time < target_time:
                 low = mid + 1
@@ -196,12 +255,23 @@ class TellorLayerBlockFinder:
         # Return the block before the target timestamp
         result_height = high
         
-        if result_height > 0:
+        if result_height >= search_floor:
             result_time = self.get_block_time(result_height)
             logger.info(f"Found closest block: {result_height} at {result_time} (target: {target_time})")
             return result_height
         else:
-            logger.warning(f"Target timestamp {target_time} is before genesis block")
+            # Only claim "before earliest" if we explicitly proved it above.
+            if earliest_time is not None and target_time < earliest_time:
+                logger.warning(f"Target timestamp {target_time} is before node earliest available block")
+            elif successful_time_reads == 0:
+                logger.warning(
+                    "Could not resolve block timestamp in available node range because all block-time "
+                    "queries failed during binary search"
+                )
+            else:
+                logger.warning(
+                    "Could not resolve a matching block in node range despite successful timestamp queries"
+                )
             return None
     
     def find_block_by_unix_timestamp(self, unix_timestamp: int) -> Optional[int]:

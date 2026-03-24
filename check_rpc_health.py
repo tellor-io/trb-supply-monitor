@@ -29,7 +29,7 @@ except ImportError:
 
 # Configuration from environment
 TELLOR_LAYER_RPC_URL = os.getenv('TELLOR_LAYER_RPC_URL')
-LAYER_GRPC_URL = os.getenv('LAYER_GRPC_URL')
+LAYER_API_URL = os.getenv('LAYER_API_URL')
 ETHEREUM_RPC_URL = os.getenv('ETHEREUM_RPC_URL')
 
 def setup_logging(verbose: bool = False):
@@ -183,17 +183,29 @@ def check_ethereum_rpc(logger) -> tuple:
         info['error'] = error_msg
         return False, info
 
-def check_tellor_layer_grpc(logger) -> tuple:
+def check_tellor_layer_api(logger) -> tuple:
     """
-    Check if Tellor Layer GRPC endpoint is responding.
+    Check if Tellor Layer API endpoint is responding.
     
     Returns:
         (success: bool, info: dict)
     """
-    logger.info(f"🔍 Checking Tellor Layer GRPC: {LAYER_GRPC_URL}")
+    logger.info(f"🔍 Checking Tellor Layer API: {LAYER_API_URL}")
+
+    if not LAYER_API_URL:
+        info = {
+            'url': LAYER_API_URL,
+            'node_info_available': False,
+            'accounts_available': False,
+            'network': None,
+            'version': None,
+            'error': 'LAYER_API_URL is not configured'
+        }
+        logger.error("❌ LAYER_API_URL is not configured")
+        return False, info
     
     info = {
-        'url': LAYER_GRPC_URL,
+        'url': LAYER_API_URL,
         'node_info_available': False,
         'accounts_available': False,
         'network': None,
@@ -205,7 +217,7 @@ def check_tellor_layer_grpc(logger) -> tuple:
         # Test node info endpoint
         logger.debug("Testing node info endpoint...")
         response = requests.get(
-            f"{LAYER_GRPC_URL.rstrip('/')}/cosmos/base/tendermint/v1beta1/node_info",
+            f"{LAYER_API_URL.rstrip('/')}/cosmos/base/tendermint/v1beta1/node_info",
             timeout=15
         )
         
@@ -221,7 +233,7 @@ def check_tellor_layer_grpc(logger) -> tuple:
         # Test accounts endpoint
         logger.debug("Testing accounts endpoint...")
         response = requests.get(
-            f"{LAYER_GRPC_URL.rstrip('/')}/cosmos/auth/v1beta1/accounts?pagination.limit=1",
+            f"{LAYER_API_URL.rstrip('/')}/cosmos/auth/v1beta1/accounts?pagination.limit=1",
             timeout=15
         )
         
@@ -233,7 +245,7 @@ def check_tellor_layer_grpc(logger) -> tuple:
                 logger.debug("Accounts endpoint responding")
         
         if info['node_info_available'] or info['accounts_available']:
-            logger.info(f"✅ Tellor Layer GRPC responding - Network: {info['network']}, Version: {info['version']}")
+            logger.info(f"✅ Tellor Layer API responding - Network: {info['network']}, Version: {info['version']}")
             return True, info
         else:
             error_msg = "No endpoints responding properly"
@@ -291,7 +303,7 @@ def main():
     print("🔧 Starting RPC Health Checks...")
     print(f"Environment:")
     print(f"  TELLOR_LAYER_RPC_URL: {TELLOR_LAYER_RPC_URL}")
-    print(f"  LAYER_GRPC_URL: {LAYER_GRPC_URL}")
+    print(f"  LAYER_API_URL: {LAYER_API_URL}")
     print(f"  ETHEREUM_RPC_URL: {ETHEREUM_RPC_URL}")
     print()
     
@@ -300,7 +312,7 @@ def main():
     # Check all RPCs
     results['Tellor Layer RPC'] = check_tellor_layer_rpc(logger)
     results['Ethereum RPC'] = check_ethereum_rpc(logger)
-    results['Tellor Layer GRPC'] = check_tellor_layer_grpc(logger)
+    results['Tellor Layer API'] = check_tellor_layer_api(logger)
     
     # Print summary
     success = print_summary(results)
