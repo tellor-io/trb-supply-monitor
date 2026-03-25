@@ -94,6 +94,8 @@ class SnapshotDetailPage {
         // Update supply metrics
         document.getElementById('bridgeBalance').textContent =
             this.formatTRB(this.snapshotData.bridge_balance_trb);
+        document.getElementById('bridgeV2Balance').textContent =
+            this.formatTRB(this.snapshotData.bridge_v2_balance_trb);
         document.getElementById('layerSupply').textContent =
             this.formatTRB(this.snapshotData.layer_total_supply_trb);
         document.getElementById('freeFloating').textContent =

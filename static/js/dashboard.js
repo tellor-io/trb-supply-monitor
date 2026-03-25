@@ -116,7 +116,7 @@ class HistoricalDashboard {
         if (!data.timeline || data.timeline.length === 0) {
             tbody.innerHTML = `
                 <tr>
-                    <td colspan="11" class="text-center text-muted">
+                    <td colspan="12" class="text-center text-muted">
                         No historical data available for the selected time range.
                         <br><small>Try triggering a collection or selecting a different time range.</small>
                     </td>
@@ -154,6 +154,9 @@ class HistoricalDashboard {
                     </td>
                     <td class="font-mono text-primary">
                         ${this.formatTRB(snapshot.bridge_balance_trb)}
+                    </td>
+                    <td class="font-mono" style="color: #ffa502;">
+                        ${this.formatTRB(snapshot.bridge_v2_balance_trb)}
                     </td>
                     <td class="font-mono text-secondary">
                         ${this.formatTRB(snapshot.layer_total_supply_trb)}
@@ -285,10 +288,16 @@ class HistoricalDashboard {
             layerSupplyEl.textContent = `${this.formatNumber(data.total_trb_balance, 2)} TRB`;
         }
         
-        // Update bridge balance
+        // Update bridge V1 balance
         const bridgeBalanceEl = document.getElementById('compactBridgeBalance');
         if (bridgeBalanceEl) {
             bridgeBalanceEl.textContent = `${this.formatNumber(data.bridge_balance_trb, 2)} TRB`;
+        }
+        
+        // Update bridge V2 balance
+        const bridgeV2BalanceEl = document.getElementById('compactBridgeV2Balance');
+        if (bridgeV2BalanceEl) {
+            bridgeV2BalanceEl.textContent = `${this.formatNumber(data.bridge_v2_balance_trb, 2)} TRB`;
         }
         
         // Update block height (without commas)
@@ -341,8 +350,8 @@ class HistoricalDashboard {
             }
             
             const headers = [
-                'timestamp', 'eth_block_number', 'bridge_balance_trb', 'layer_total_supply_trb', 
-                'free_floating_trb', 'bonded_tokens', 'not_bonded_tokens', 
+                'timestamp', 'eth_block_number', 'bridge_balance_trb', 'bridge_v2_balance_trb',
+                'layer_total_supply_trb', 'free_floating_trb', 'bonded_tokens', 'not_bonded_tokens', 
                 'total_addresses', 'addresses_with_balance', 'total_trb_balance', 'data_completeness_score'
             ];
             
@@ -511,10 +520,20 @@ class HistoricalDashboard {
                         pointHoverRadius: 6
                     },
                     {
-                        label: 'Bridge Balance',
+                        label: 'Bridge V1 Balance',
                         data: sortedTimeline.map(d => d.bridge_balance_trb || 0),
                         borderColor: '#ff6b6b',
                         backgroundColor: 'rgba(255, 107, 107, 0.1)',
+                        fill: false,
+                        tension: 0.1,
+                        pointRadius: 2,
+                        pointHoverRadius: 6
+                    },
+                    {
+                        label: 'Bridge V2 Balance',
+                        data: sortedTimeline.map(d => d.bridge_v2_balance_trb || 0),
+                        borderColor: '#ffa502',
+                        backgroundColor: 'rgba(255, 165, 2, 0.1)',
                         fill: false,
                         tension: 0.1,
                         pointRadius: 2,
@@ -536,10 +555,21 @@ class HistoricalDashboard {
                 labels: labels,
                 datasets: [
                     {
-                        label: 'Bridge Balance',
+                        label: 'Bridge V1 Balance',
                         data: sortedTimeline.map(d => d.bridge_balance_trb || 0),
                         borderColor: '#ff6b6b',
                         backgroundColor: 'rgba(255, 107, 107, 0.2)',
+                        fill: true,
+                        tension: 0.1,
+                        pointRadius: 3,
+                        pointHoverRadius: 7,
+                        yAxisID: 'y'
+                    },
+                    {
+                        label: 'Bridge V2 Balance',
+                        data: sortedTimeline.map(d => d.bridge_v2_balance_trb || 0),
+                        borderColor: '#ffa502',
+                        backgroundColor: 'rgba(255, 165, 2, 0.15)',
                         fill: true,
                         tension: 0.1,
                         pointRadius: 3,

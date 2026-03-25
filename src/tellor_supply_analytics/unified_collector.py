@@ -53,6 +53,7 @@ ETHEREUM_RPC_URL = os.getenv('ETHEREUM_RPC_URL', 'https://rpc.sepolia.org')
 TRB_CONTRACT = os.getenv('TRB_CONTRACT')
 CURRENT_BRIDGE_CONTRACT = os.getenv('CURRENT_BRIDGE_CONTRACT')
 OLD_BRIDGE_CONTRACT_1 = os.getenv('OLD_BRIDGE_CONTRACT_1')
+BRIDGE_V2_CONTRACT = os.getenv('TRBBRIDGEV2_CONTRACT_ADDRESS')
 
 # Bridge contract transition height
 BRIDGE_CONTRACT_TRANSITION_HEIGHT = 9569214
@@ -350,6 +351,42 @@ class UnifiedDataCollector:
             logger.error(f"Error getting bridge balance for block {block_desc}: {e}")
             return None
     
+    def collect_bridge_v2_data_for_block(self, block_number: Optional[int], block_timestamp: int) -> Optional[float]:
+        """
+        Collect V2 bridge balance data for a specific Ethereum block.
+        
+        Args:
+            block_number: Ethereum block number, or None for latest block
+            block_timestamp: Ethereum block timestamp
+            
+        Returns:
+            V2 bridge balance in TRB, or None if failed
+        """
+        if not self.w3 or not self.trb_contract:
+            logger.error("Web3 or TRB contract not initialized")
+            return None
+        
+        if not BRIDGE_V2_CONTRACT:
+            logger.debug("TRBBRIDGEV2_CONTRACT_ADDRESS not configured, skipping V2 bridge balance")
+            return None
+            
+        try:
+            block_id = block_number if block_number is not None else 'latest'
+            balance = self.trb_contract.functions.balanceOf(
+                Web3.to_checksum_address(BRIDGE_V2_CONTRACT)
+            ).call(block_identifier=block_id)
+            
+            balance_trb = balance / (10 ** 18)
+            
+            block_desc = block_number if block_number is not None else "latest"
+            logger.info(f"Bridge V2 balance at ETH block {block_desc}: {balance_trb:.6f} TRB")
+            return balance_trb
+            
+        except Exception as e:
+            block_desc = block_number if block_number is not None else "latest"
+            logger.error(f"Error getting V2 bridge balance for block {block_desc}: {e}")
+            return None
+
     def calculate_historical_bridge_balance(self, target_timestamp: int, 
                                           deposits_csv: Optional[str] = None,
                                           withdrawals_csv: Optional[str] = None) -> Optional[float]:
@@ -746,6 +783,12 @@ class UnifiedDataCollector:
                 logger.error("Failed to calculate historical bridge balance from CSV files")
                 bridge_balance = 0.0
         
+        # Collect V2 bridge balance (RPC-only, no CSV fallback)
+        logger.info(f"Querying V2 bridge balance at specific ETH block {eth_block_number}...")
+        bridge_v2_balance = self.collect_bridge_v2_data_for_block(eth_block_number, eth_timestamp)
+        if bridge_v2_balance is None:
+            bridge_v2_balance = 0.0
+        
         # Collect layer supply data using the resolved layer height
         logger.info(f"Collecting layer supply data at Tellor Layer block height {resolved_layer_height}...")
         supply_data = self.collect_historical_layer_data(resolved_layer_height, resolved_layer_timestamp, eth_timestamp)
@@ -774,7 +817,8 @@ class UnifiedDataCollector:
                 eth_block_timestamp=eth_timestamp,
                 supply_data=supply_data,
                 balance_data=balance_data,
-                bridge_balance_trb=bridge_balance
+                bridge_balance_trb=bridge_balance,
+                bridge_v2_balance_trb=bridge_v2_balance
             )
             
             logger.info(f"Saved unified snapshot {snapshot_id} for ETH block {eth_block_number} using Tellor Layer block {resolved_layer_height}")
