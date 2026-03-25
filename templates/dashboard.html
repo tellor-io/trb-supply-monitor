@@ -63,12 +63,20 @@
                                 </div>
                             </div>
                             
-                            <!-- Row 2: Bridge | With Balance -->
+                            <!-- Row 2: Bridge V1 | Bridge V2 -->
                             <div class="compact-stat-row">
                                 <div class="compact-stat-item">
-                                    <span class="compact-stat-label">Bridge:</span>
+                                    <span class="compact-stat-label">Bridge V1:</span>
                                     <span id="compactBridgeBalance" class="compact-stat-value">--</span>
                                 </div>
+                                <div class="compact-stat-item">
+                                    <span class="compact-stat-label">Bridge V2:</span>
+                                    <span id="compactBridgeV2Balance" class="compact-stat-value">--</span>
+                                </div>
+                            </div>
+                            
+                            <!-- Row 3: With Balance | (moved from row 2) -->
+                            <div class="compact-stat-row">
                                 <div class="compact-stat-item">
                                     <span class="compact-stat-label">With Balance:</span>
                                     <span id="compactAddressesWithBalance" class="compact-stat-value">--</span>
@@ -150,7 +158,8 @@
                                     <th>Timestamp</th>
                                     <th>ETH Block</th>
                                     <th>Layer Block Number</th>
-                                    <th>Bridge Balance (TRB)</th>
+                                    <th>Bridge V1 Balance (TRB)</th>
+                                    <th>Bridge V2 Balance (TRB)</th>
                                     <th>Layer Supply (TRB)</th>
                                     <th>Free Floating (TRB)</th>
                                     <th>Bonded Tokens</th>
@@ -162,7 +171,7 @@
                             </thead>
                             <tbody id="historicalTableBody">
                                 <tr>
-                                    <td colspan="11" class="text-center">Loading historical data...</td>
+                                    <td colspan="12" class="text-center">Loading historical data...</td>
                                 </tr>
                             </tbody>
                         </table>

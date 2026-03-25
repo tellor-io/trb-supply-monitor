@@ -25,6 +25,7 @@ class BalancesDatabase:
         self.db_path = db_path
         self.init_database()
         self.migrate_add_reporter_power_column()
+        self.migrate_add_bridge_v2_column()
     
     def migrate_add_reporter_power_column(self):
         """Add total_reporter_power column to existing unified_snapshots table if it doesn't exist."""
@@ -42,6 +43,22 @@ class BalancesDatabase:
                 logger.info("Successfully added total_reporter_power column")
             else:
                 logger.debug("total_reporter_power column already exists")
+
+    def migrate_add_bridge_v2_column(self):
+        """Add bridge_v2_balance_trb column to existing unified_snapshots table if it doesn't exist."""
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.execute("PRAGMA table_info(unified_snapshots)")
+            columns = [row[1] for row in cursor.fetchall()]
+            
+            if 'bridge_v2_balance_trb' not in columns:
+                logger.info("Adding bridge_v2_balance_trb column to unified_snapshots table")
+                conn.execute('''
+                    ALTER TABLE unified_snapshots 
+                    ADD COLUMN bridge_v2_balance_trb REAL
+                ''')
+                logger.info("Successfully added bridge_v2_balance_trb column")
+            else:
+                logger.debug("bridge_v2_balance_trb column already exists")
 
     def init_database(self):
         """Initialize database tables."""
@@ -121,6 +138,7 @@ class BalancesDatabase:
                     
                     -- Ethereum/Bridge Data
                     bridge_balance_trb REAL,
+                    bridge_v2_balance_trb REAL,
                     
                     -- Tellor Layer Data  
                     layer_block_height INTEGER,
@@ -517,7 +535,8 @@ class BalancesDatabase:
                             eth_block_timestamp: int,
                             supply_data: Optional[Dict] = None,
                             balance_data: Optional[List[Tuple[str, str, int, float]]] = None,
-                            bridge_balance_trb: Optional[float] = None) -> int:
+                            bridge_balance_trb: Optional[float] = None,
+                            bridge_v2_balance_trb: Optional[float] = None) -> int:
         """
         Save a unified snapshot using Ethereum block timestamp as the primary timeline.
         
@@ -526,7 +545,8 @@ class BalancesDatabase:
             eth_block_timestamp: Ethereum block timestamp (primary timeline)
             supply_data: Dictionary containing supply metrics
             balance_data: List of tuples (address, account_type, loya_balance, loya_balance_trb)  
-            bridge_balance_trb: Bridge balance in TRB
+            bridge_balance_trb: Bridge V1 balance in TRB
+            bridge_v2_balance_trb: Bridge V2 balance in TRB
             
         Returns:
             The ID of the unified snapshot record
@@ -535,23 +555,27 @@ class BalancesDatabase:
         eth_block_datetime = datetime.fromtimestamp(eth_block_timestamp, tz=timezone.utc).isoformat()
         
         # Calculate data completeness score
-        completeness_score = self._calculate_completeness_score(supply_data, balance_data, bridge_balance_trb)
+        completeness_score = self._calculate_completeness_score(
+            supply_data, balance_data, bridge_balance_trb, bridge_v2_balance_trb
+        )
         
         with sqlite3.connect(self.db_path) as conn:
             # Insert or update unified snapshot record
             cursor = conn.execute('''
                 INSERT OR REPLACE INTO unified_snapshots 
                 (eth_block_number, eth_block_timestamp, eth_block_datetime, 
-                 bridge_balance_trb, layer_block_height, layer_block_timestamp, layer_block_datetime,
+                 bridge_balance_trb, bridge_v2_balance_trb,
+                 layer_block_height, layer_block_timestamp, layer_block_datetime,
                  layer_total_supply_trb, not_bonded_tokens, bonded_tokens, total_reporter_power,
                  total_addresses, addresses_with_balance, total_loya_balance, total_trb_balance, 
                  free_floating_trb, collection_time, data_completeness_score)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ''', (
                 eth_block_number,
                 eth_block_timestamp, 
                 eth_block_datetime,
                 bridge_balance_trb,
+                bridge_v2_balance_trb,
                 supply_data.get('layer_block_height') if supply_data else None,
                 supply_data.get('layer_block_timestamp') if supply_data else None,
                 datetime.fromtimestamp(supply_data.get('layer_block_timestamp', 0), tz=timezone.utc).isoformat() if supply_data and supply_data.get('layer_block_timestamp') else None,
@@ -595,12 +619,16 @@ class BalancesDatabase:
     def _calculate_completeness_score(self, 
                                     supply_data: Optional[Dict], 
                                     balance_data: Optional[List], 
-                                    bridge_balance: Optional[float]) -> float:
+                                    bridge_balance: Optional[float],
+                                    bridge_v2_balance: Optional[float] = None) -> float:
         """Calculate a completeness score (0-1) based on available data fields."""
-        total_fields = 7  # bridge, layer_supply, staking(2), balances(3)
+        total_fields = 8  # bridge_v1, bridge_v2, layer_supply, staking(2), balances(3)
         completed_fields = 0
         
         if bridge_balance is not None:
+            completed_fields += 1
+        
+        if bridge_v2_balance is not None:
             completed_fields += 1
             
         if supply_data:
@@ -697,7 +725,8 @@ class BalancesDatabase:
         values = []
         
         for field, value in update_data.items():
-            if field in ['bridge_balance_trb', 'layer_block_height', 'layer_block_timestamp',
+            if field in ['bridge_balance_trb', 'bridge_v2_balance_trb',
+                        'layer_block_height', 'layer_block_timestamp',
                         'layer_total_supply_trb', 'not_bonded_tokens', 'bonded_tokens',
                         'total_reporter_power', 'total_addresses', 'addresses_with_balance', 
                         'total_loya_balance', 'total_trb_balance', 'free_floating_trb']:
@@ -714,8 +743,9 @@ class BalancesDatabase:
             query = f'''
                 UPDATE unified_snapshots 
                 SET {', '.join(set_clauses)}, data_completeness_score = (
-                    SELECT COUNT(*) * 1.0 / 7 FROM (
+                    SELECT COUNT(*) * 1.0 / 8 FROM (
                         SELECT 1 WHERE bridge_balance_trb IS NOT NULL
+                        UNION ALL SELECT 1 WHERE bridge_v2_balance_trb IS NOT NULL
                         UNION ALL SELECT 1 WHERE layer_total_supply_trb IS NOT NULL  
                         UNION ALL SELECT 1 WHERE not_bonded_tokens IS NOT NULL
                         UNION ALL SELECT 1 WHERE bonded_tokens IS NOT NULL
