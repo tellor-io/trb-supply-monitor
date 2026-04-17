@@ -91,12 +91,12 @@
                 </div>
             </section>
 
-            <!-- Future Block Height Estimation -->
+            <!-- Estimate Time of Future Block Height -->
             <section class="card mb-xl" id="estimationSection">
                 <div class="card-header">
-                    <h2>Future Block Height Estimation</h2>
+                    <h2>Estimate Time of Future Block Height</h2>
                     <p class="text-sm text-tertiary mt-sm">
-                        Estimate when a future Tellor Layer block height will be reached
+                        Estimate the real-world time when a future block height will be reached
                     </p>
                 </div>
                 <div class="card-body">
@@ -177,6 +177,110 @@
                     
                     <!-- Error Display (dynamically created when needed) -->
                     <div id="estimationError"></div>
+                </div>
+            </section>
+
+            <!-- Estimate Block Height from Future Date/Time -->
+            <section class="card mb-xl" id="heightEstimationSection">
+                <div class="card-header">
+                    <h2>Estimate Block Height at a Future Date &amp; Time</h2>
+                    <p class="text-sm text-tertiary mt-sm">
+                        Enter a future date and time to estimate the block height that will be reached
+                    </p>
+                </div>
+                <div class="card-body">
+                    <div class="flex gap-md items-end mb-lg" style="flex-wrap: wrap;">
+                        <div style="flex: 1; min-width: 200px; max-width: 280px;">
+                            <label for="targetDatetimeInput" class="form-label">Target Date &amp; Time:</label>
+                            <input
+                                type="datetime-local"
+                                id="targetDatetimeInput"
+                                class="form-input"
+                            >
+                        </div>
+                        <div style="flex: 1; min-width: 200px; max-width: 280px;">
+                            <label for="timezoneSelect" class="form-label">Timezone:</label>
+                            <select id="timezoneSelect" class="form-input">
+                                <option value="America/New_York" selected>Eastern (New York)</option>
+                                <option value="America/Chicago">Central (Chicago)</option>
+                                <option value="America/Denver">Mountain (Denver)</option>
+                                <option value="America/Los_Angeles">Pacific (Los Angeles)</option>
+                                <option value="America/Anchorage">Alaska (Anchorage)</option>
+                                <option value="Pacific/Honolulu">Hawaii (Honolulu)</option>
+                                <option value="UTC">UTC</option>
+                                <option value="Europe/London">London (GMT/BST)</option>
+                                <option value="Europe/Paris">Paris (CET/CEST)</option>
+                                <option value="Europe/Berlin">Berlin (CET/CEST)</option>
+                                <option value="Europe/Moscow">Moscow (MSK)</option>
+                                <option value="Asia/Dubai">Dubai (GST)</option>
+                                <option value="Asia/Kolkata">India (IST)</option>
+                                <option value="Asia/Singapore">Singapore (SGT)</option>
+                                <option value="Asia/Shanghai">China (CST)</option>
+                                <option value="Asia/Tokyo">Tokyo (JST)</option>
+                                <option value="Australia/Sydney">Sydney (AEST/AEDT)</option>
+                            </select>
+                        </div>
+                        <button class="btn btn-primary" id="estimateHeightBtn">
+                            <i class="fas fa-calculator"></i>
+                            Estimate
+                        </button>
+                    </div>
+
+                    <!-- Height Estimation Results -->
+                    <div id="heightEstimationResults" class="hidden">
+                        <div class="grid grid-cols-2 gap-lg">
+                            <div class="estimation-info">
+                                <h3 class="text-lg font-semibold mb-sm">Current Network Status</h3>
+                                <div class="space-y-xs">
+                                    <div class="flex justify-between">
+                                        <span class="text-tertiary">Current Height:</span>
+                                        <span id="heCurrHeight" class="font-mono">--</span>
+                                    </div>
+                                    <div class="flex justify-between">
+                                        <span class="text-tertiary">Current Time (UTC):</span>
+                                        <span id="heCurrTime" class="font-mono">--</span>
+                                    </div>
+                                    <div class="flex justify-between">
+                                        <span class="text-tertiary">Average Block Time:</span>
+                                        <span id="heAvgBlockTime" class="font-mono">--</span>
+                                    </div>
+                                    <div class="flex justify-between">
+                                        <span class="text-tertiary">Data Source:</span>
+                                        <span id="heDataSource" class="text-sm">--</span>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="estimation-results">
+                                <h3 class="text-lg font-semibold mb-sm">Estimation Results</h3>
+                                <div class="space-y-xs">
+                                    <div class="flex justify-between">
+                                        <span class="text-tertiary">Target Date/Time:</span>
+                                        <span id="heTargetDatetime" class="font-mono">--</span>
+                                    </div>
+                                    <div class="flex justify-between">
+                                        <span class="text-tertiary">Time Until Target:</span>
+                                        <span id="heTimeUntil" class="font-semibold text-primary">--</span>
+                                    </div>
+                                    <div class="flex justify-between">
+                                        <span class="text-tertiary">Blocks Until Then:</span>
+                                        <span id="heBlocksUntil" class="font-mono">--</span>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Estimated Block Height highlight -->
+                        <div class="mt-lg p-md bg-secondary rounded">
+                            <div class="flex justify-between items-center">
+                                <span class="text-tertiary">Estimated Block Height at Target Time:</span>
+                                <span id="heEstimatedHeight" class="font-mono font-semibold text-lg">--</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Error Display -->
+                    <div id="heightEstimationError"></div>
                 </div>
             </section>
 

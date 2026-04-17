@@ -77,6 +77,23 @@ class BlockTimeAnalytics {
                 }
             });
         }
+
+        // Estimate height from future date/time
+        const estimateHeightBtn = document.getElementById('estimateHeightBtn');
+        if (estimateHeightBtn) {
+            estimateHeightBtn.addEventListener('click', () => {
+                this.estimateFutureBlockHeight();
+            });
+        }
+
+        const targetDatetimeInput = document.getElementById('targetDatetimeInput');
+        if (targetDatetimeInput) {
+            targetDatetimeInput.addEventListener('keypress', (e) => {
+                if (e.key === 'Enter') {
+                    this.estimateFutureBlockHeight();
+                }
+            });
+        }
     }
     
     initChart() {
@@ -642,6 +659,98 @@ class BlockTimeAnalytics {
         const currentHeightEl = document.getElementById('currentBlockHeight');
         if (currentHeightEl && currentHeightEl.textContent === '--') {
             currentHeightEl.textContent = 'Error';
+        }
+    }
+
+    async estimateFutureBlockHeight() {
+        const datetimeInput = document.getElementById('targetDatetimeInput');
+        const timezoneSelect = document.getElementById('timezoneSelect');
+        const estimateHeightBtn = document.getElementById('estimateHeightBtn');
+
+        if (!datetimeInput || !timezoneSelect || !estimateHeightBtn) {
+            return;
+        }
+
+        const targetDatetime = datetimeInput.value;
+        const timezone = timezoneSelect.value;
+
+        if (!targetDatetime) {
+            this.showHeightEstimationError('Please select a target date and time');
+            return;
+        }
+
+        estimateHeightBtn.disabled = true;
+        estimateHeightBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Estimating...';
+
+        this.hideHeightEstimationError();
+        this.hideHeightEstimationResults();
+
+        try {
+            console.log(`Estimating block height at ${targetDatetime} (${timezone})`);
+
+            const params = new URLSearchParams({ target_datetime: targetDatetime, timezone });
+            const response = await fetch(`${this.apiBase}/block-time/estimate-height?${params}`);
+
+            if (!response.ok) {
+                const errorData = await response.json();
+                throw new Error(errorData.detail || `HTTP error! status: ${response.status}`);
+            }
+
+            const data = await response.json();
+            console.log('Height estimation data received:', data);
+            this.displayHeightEstimationResults(data);
+
+        } catch (error) {
+            console.error('Error estimating future block height:', error);
+            this.showHeightEstimationError(error.message || 'Failed to estimate block height');
+        } finally {
+            estimateHeightBtn.disabled = false;
+            estimateHeightBtn.innerHTML = '<i class="fas fa-calculator"></i> Estimate';
+        }
+    }
+
+    displayHeightEstimationResults(data) {
+        this.hideHeightEstimationError();
+
+        const resultsSection = document.getElementById('heightEstimationResults');
+        if (resultsSection) {
+            resultsSection.classList.remove('hidden');
+        }
+
+        this.updateElement('heCurrHeight', data.current_height?.toLocaleString() || '--');
+        this.updateElement('heCurrTime', data.current_datetime_formatted || '--');
+        this.updateElement('heAvgBlockTime', data.avg_block_time_seconds != null ? `${data.avg_block_time_seconds}s` : '--');
+        this.updateElement('heDataSource', data.data_source || '--');
+
+        this.updateElement('heTargetDatetime', data.target_datetime_formatted || '--');
+        this.updateElement('heTimeUntil', data.time_until_formatted || '--');
+        this.updateElement('heBlocksUntil', data.blocks_until != null ? data.blocks_until.toLocaleString() : '--');
+        this.updateElement('heEstimatedHeight', data.estimated_height != null ? data.estimated_height.toLocaleString() : '--');
+    }
+
+    showHeightEstimationError(message) {
+        const errorDiv = document.getElementById('heightEstimationError');
+        if (errorDiv) {
+            errorDiv.innerHTML = `
+                <div class="alert alert-error">
+                    <i class="fas fa-exclamation-triangle"></i>
+                    <span>${message}</span>
+                </div>
+            `;
+        }
+    }
+
+    hideHeightEstimationError() {
+        const errorDiv = document.getElementById('heightEstimationError');
+        if (errorDiv) {
+            errorDiv.innerHTML = '';
+        }
+    }
+
+    hideHeightEstimationResults() {
+        const resultsSection = document.getElementById('heightEstimationResults');
+        if (resultsSection) {
+            resultsSection.classList.add('hidden');
         }
     }
 }

@@ -966,6 +966,170 @@ async def estimate_future_block_time(
         raise HTTPException(status_code=500, detail="Internal server error")
 
 
+@app.get("/api/block-time/estimate-height")
+async def estimate_future_block_height(
+    target_datetime: str = Query(..., description="Target date/time in ISO format (YYYY-MM-DDTHH:MM)"),
+    timezone: str = Query("America/New_York", description="IANA timezone name, e.g. America/New_York")
+):
+    """Estimate what block height will be reached at a given future date and time."""
+    try:
+        import sqlite3
+        import subprocess
+        import json
+        import os
+        import pytz
+
+        # Parse the target datetime in the user's timezone
+        try:
+            tz = pytz.timezone(timezone)
+        except pytz.exceptions.UnknownTimeZoneError:
+            raise HTTPException(status_code=400, detail=f"Unknown timezone: {timezone}")
+
+        try:
+            # Accept "YYYY-MM-DDTHH:MM" or "YYYY-MM-DDTHH:MM:SS"
+            naive_dt = datetime.fromisoformat(target_datetime)
+        except ValueError:
+            raise HTTPException(status_code=400, detail=f"Invalid datetime format: {target_datetime}. Use YYYY-MM-DDTHH:MM")
+
+        target_dt_local = tz.localize(naive_dt)
+        target_dt_utc = target_dt_local.astimezone(pytz.UTC)
+
+        # Get real-time current block height from layerd
+        real_time_height = None
+        layerd_path = './layerd'
+        tellor_layer_rpc_url = os.getenv('TELLOR_LAYER_RPC_URL')
+
+        try:
+            cmd = [layerd_path, 'status', '--output', 'json', '--node', tellor_layer_rpc_url]
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
+            if result.returncode == 0:
+                status_data = json.loads(result.stdout)
+                real_time_height = int(status_data['sync_info']['latest_block_height'])
+                logger.info(f"Got real-time height from layerd status: {real_time_height}")
+            else:
+                logger.warning(f"layerd status failed: {result.stderr}")
+        except Exception as e:
+            logger.warning(f"Could not get real-time height from layerd: {e}")
+
+        # Get latest snapshot for timestamp reference
+        with sqlite3.connect(db.db_path) as conn:
+            cursor = conn.execute('''
+                SELECT
+                    layer_block_height,
+                    layer_block_timestamp,
+                    eth_block_datetime
+                FROM unified_snapshots
+                WHERE layer_block_height IS NOT NULL
+                  AND layer_block_timestamp IS NOT NULL
+                ORDER BY eth_block_timestamp DESC
+                LIMIT 1
+            ''')
+            latest_row = cursor.fetchone()
+
+        if not latest_row:
+            raise HTTPException(status_code=404, detail="No current block data available")
+
+        db_height = latest_row[0]
+        db_timestamp = latest_row[1]
+        db_datetime_str = latest_row[2]
+
+        from datetime import timezone as dt_timezone
+        if real_time_height is not None:
+            current_height = real_time_height
+            blocks_since_snapshot = current_height - db_height
+            estimated_time_diff = blocks_since_snapshot * 1.7
+            current_timestamp = db_timestamp + int(estimated_time_diff)
+            data_source_note = f"real-time (layerd: {current_height}, db snapshot: {db_height})"
+        else:
+            current_height = db_height
+            current_timestamp = db_timestamp
+            data_source_note = "database snapshot (may be slightly outdated)"
+
+        current_dt_utc = datetime.fromtimestamp(current_timestamp, tz=dt_timezone.utc)
+        current_dt_local = current_dt_utc.astimezone(tz)
+
+        # Target must be in the future
+        seconds_until = (target_dt_utc - current_dt_utc).total_seconds()
+        if seconds_until <= 0:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Target datetime must be in the future. Current time is {current_dt_utc.strftime('%Y-%m-%d %H:%M:%S UTC')}"
+            )
+
+        # Get average block time from last 24 hours
+        cutoff_timestamp = int((datetime.now() - timedelta(hours=24)).timestamp())
+        with sqlite3.connect(db.db_path) as conn:
+            cursor = conn.execute('''
+                SELECT
+                    layer_block_height,
+                    layer_block_timestamp
+                FROM unified_snapshots
+                WHERE eth_block_timestamp >= ?
+                  AND layer_block_height IS NOT NULL
+                  AND layer_block_timestamp IS NOT NULL
+                ORDER BY eth_block_timestamp ASC
+            ''', (cutoff_timestamp,))
+            rows = cursor.fetchall()
+
+        if len(rows) < 2:
+            avg_block_time = 1.7
+            data_source = "default estimate"
+            total_blocks_analyzed = 0
+        else:
+            block_times = []
+            for i in range(1, len(rows)):
+                height_diff = rows[i][0] - rows[i-1][0]
+                time_diff = rows[i][1] - rows[i-1][1]
+                if height_diff > 0 and time_diff > 0:
+                    block_times.append(time_diff / height_diff)
+
+            if block_times:
+                avg_block_time = sum(block_times) / len(block_times)
+                data_source = f"last 24 hours ({len(block_times)} data points)"
+                total_blocks_analyzed = sum(rows[i][0] - rows[i-1][0] for i in range(1, len(rows)) if rows[i][0] > rows[i-1][0])
+            else:
+                avg_block_time = 1.7
+                data_source = "default estimate"
+                total_blocks_analyzed = 0
+
+        # Estimated blocks between now and target
+        blocks_until = seconds_until / avg_block_time
+        estimated_height = int(current_height + blocks_until)
+
+        def format_time_until(seconds):
+            if seconds < 60:
+                return f"{int(seconds)} seconds"
+            elif seconds < 3600:
+                return f"{int(seconds / 60)} minutes"
+            elif seconds < 86400:
+                return f"{seconds / 3600:.1f} hours"
+            else:
+                return f"{seconds / 86400:.1f} days"
+
+        return {
+            "current_height": current_height,
+            "current_datetime_utc": current_dt_utc.isoformat(),
+            "current_datetime_local": current_dt_local.strftime('%Y-%m-%d %H:%M:%S'),
+            "current_datetime_formatted": current_dt_utc.strftime('%Y-%m-%d %H:%M:%S UTC'),
+            "target_datetime_utc": target_dt_utc.isoformat(),
+            "target_datetime_local": target_dt_local.strftime('%Y-%m-%d %H:%M:%S'),
+            "target_datetime_formatted": target_dt_local.strftime('%Y-%m-%d %H:%M:%S') + f" ({timezone})",
+            "timezone": timezone,
+            "seconds_until": round(seconds_until, 1),
+            "time_until_formatted": format_time_until(seconds_until),
+            "avg_block_time_seconds": round(avg_block_time, 3),
+            "data_source": f"{data_source} | Height: {data_source_note}",
+            "blocks_until": round(blocks_until),
+            "estimated_height": estimated_height,
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error estimating future block height from datetime: {e}")
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
 @app.post("/api/unified/collect")
 async def trigger_unified_collection(
     hours_back: int = Query(6, description="Hours back to collect", ge=1, le=48),
