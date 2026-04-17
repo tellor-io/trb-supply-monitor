@@ -57,7 +57,7 @@ logger = logging.getLogger(__name__)
 # Configuration
 TELLOR_LAYER_RPC_URL = os.getenv('TELLOR_LAYER_RPC_URL')
 LAYER_API_URL = os.getenv('LAYER_API_URL')
-ETHEREUM_RPC_URL = os.getenv('ETHEREUM_RPC_URL', 'https://rpc.sepolia.org')
+ETHEREUM_RPC_URL = os.getenv('ETHEREUM_RPC_URL')
 TRB_CONTRACT = os.getenv('TRB_CONTRACT')
 CURRENT_BRIDGE_CONTRACT = os.getenv('CURRENT_BRIDGE_CONTRACT')
 OLD_BRIDGE_CONTRACT_1 = os.getenv('OLD_BRIDGE_CONTRACT_1')

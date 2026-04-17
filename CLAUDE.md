@@ -152,23 +152,8 @@ uv run flake8 src/
 Create a `.env` file with:
 
 ```bash
-# Tellor Layer Configuration
-TELLOR_LAYER_RPC_URL=https://node-palmito.tellorlayer.com/rpc/
-LAYER_GRPC_URL=https://node-palmito.tellorlayer.com/
-
-# Ethereum Configuration (Sepolia testnet)
-ETHEREUM_RPC_URL=https://ethereum-sepolia-rpc.publicnode.com
-
-# Contract Addresses
-TRB_CONTRACT=0x80fc34a2f9FfE86F41580F47368289C402DEc660
-CURRENT_BRIDGE_CONTRACT=0x62733e63499a25E35844c91275d4c3bdb159D29d
-OLD_BRIDGE_CONTRACT_1=0x5acb5977f35b1A91C4fE0F4386eB669E046776F2
-
-# Collection Intervals
-CURRENT_DATA_INTERVAL=300  # 5 minutes
-
-# Optional: Discord Alerts
-DISCORD_WEBHOOK_URL=https://discord.com/api/webhooks/...
+# See .env.example for a full template — copy it to .env and fill in your values.
+# Do not commit .env; it is listed in .gitignore.
 ```
 
 ### Key Files

@@ -49,7 +49,7 @@ except ImportError:
         pass
 
 # Configuration
-ETHEREUM_RPC_URL = os.getenv('ETHEREUM_RPC_URL', 'https://rpc.sepolia.org')
+ETHEREUM_RPC_URL = os.getenv('ETHEREUM_RPC_URL')
 TRB_CONTRACT = os.getenv('TRB_CONTRACT')
 CURRENT_BRIDGE_CONTRACT = os.getenv('CURRENT_BRIDGE_CONTRACT')
 OLD_BRIDGE_CONTRACT_1 = os.getenv('OLD_BRIDGE_CONTRACT_1')
