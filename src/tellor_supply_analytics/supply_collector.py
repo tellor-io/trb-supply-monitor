@@ -64,9 +64,6 @@ OLD_BRIDGE_CONTRACT_1 = os.getenv('OLD_BRIDGE_CONTRACT_1')
 CURRENT_DATA_INTERVAL = int(os.getenv('CURRENT_DATA_INTERVAL', '300'))  # Default 5 minutes (300 seconds)
 DISCORD_WEBHOOK_URL = os.getenv('DISCORD_WEBHOOK_URL', '')  # Discord webhook URL for alerts
 
-# Bridge contract transition height
-BRIDGE_CONTRACT_TRANSITION_HEIGHT = 9569214
-
 # CSV Configuration
 CSV_FILE = 'supply_data.csv'
 CSV_HEADERS = [
@@ -95,24 +92,17 @@ ERC20_ABI = [
 
 def get_bridge_contract_for_height(layer_height: Optional[int]) -> str:
     """
-    Determine which bridge contract to use based on Tellor Layer height.
-    
-    Args:
-        layer_height: Tellor Layer block height, or None to use current contract
-        
-    Returns:
-        Bridge contract address to use
+    Return the legacy Bridge V1 contract for the singular bridge balance field.
+
+    The unified collector stores V1 and V2 separately. This legacy collector still
+    exposes a single `bridge_balance_trb` field, so it should continue to reflect
+    the old TRBBridge (V1) balance instead of switching contracts by block height.
     """
-    # If no layer height provided, use current contract
-    if layer_height is None or layer_height >= BRIDGE_CONTRACT_TRANSITION_HEIGHT:
-        return CURRENT_BRIDGE_CONTRACT
-    
-    # For heights before transition, use old contract if available, otherwise fall back to current
     if OLD_BRIDGE_CONTRACT_1 and OLD_BRIDGE_CONTRACT_1.strip():
         return OLD_BRIDGE_CONTRACT_1
-    else:
-        logger.warning(f"OLD_BRIDGE_CONTRACT_1 not configured, using CURRENT_BRIDGE_CONTRACT for layer height {layer_height}")
-        return CURRENT_BRIDGE_CONTRACT
+
+    logger.warning("OLD_BRIDGE_CONTRACT_1 not configured, falling back to CURRENT_BRIDGE_CONTRACT")
+    return CURRENT_BRIDGE_CONTRACT
 
 
 class SupplyDataCollector:

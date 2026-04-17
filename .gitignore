@@ -62,3 +62,4 @@ database_exports/*
 !database_exports/.gitkeep
 uv.lock
 uv.lock
+tellor_balances.db.backup

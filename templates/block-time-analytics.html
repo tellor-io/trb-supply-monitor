@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Tellor Layer Block Time Analytics</title>
+    <title>Block Frequency and Size Analytics</title>
     <!-- Static assets use root_path for serving under nginx location prefixes -->
     <link rel="stylesheet" href="{{ root_path }}/static/css/unified-style-template.css">
     <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -30,7 +30,7 @@
                 <div class="card-header">
                     <div class="flex justify-between items-start">
                         <div>
-                            <h2>Tellor Layer Block Time Analytics</h2>
+                            <h2>Block Frequency and Size Analytics</h2>
                             <p class="text-sm text-tertiary mt-sm">
                                 Average time between blocks on the Tellor Layer network
                             </p>
@@ -65,6 +65,18 @@
                             <div class="compact-stat-item">
                                 <span class="compact-stat-label">Time Range:</span>
                                 <span id="timeRangeDisplay" class="compact-stat-value">--</span>
+                            </div>
+                            <div class="compact-stat-item">
+                                <span class="compact-stat-label">Avg Block Size:</span>
+                                <span id="avgBlockSize" class="compact-stat-value">--</span>
+                            </div>
+                            <div class="compact-stat-item">
+                                <span class="compact-stat-label">Max Block Size:</span>
+                                <span id="maxBlockSize" class="compact-stat-value">--</span>
+                            </div>
+                            <div class="compact-stat-item">
+                                <span class="compact-stat-label">Blocks Tracked:</span>
+                                <span id="blocksTracked" class="compact-stat-value">--</span>
                             </div>
                         </div>
                     </div>
@@ -189,11 +201,13 @@
                                     <th>Height Range</th>
                                     <th>Blocks Counted</th>
                                     <th>Time Span (seconds)</th>
+                                    <th>Avg Block Size</th>
+                                    <th>Max Block Size</th>
                                 </tr>
                             </thead>
                             <tbody id="blockTimeTableBody">
                                 <tr>
-                                    <td colspan="5" class="text-center">Loading block time data...</td>
+                                    <td colspan="7" class="text-center">Loading block time data...</td>
                                 </tr>
                             </tbody>
                         </table>

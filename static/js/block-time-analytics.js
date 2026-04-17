@@ -13,6 +13,7 @@ class BlockTimeAnalytics {
         this.chart = null;
         this.currentData = null;
         this.currentTimeRange = 24; // Default to 24 hours
+        this.blockSizeLimit = 1000; // Number of time buckets to divide the chart range into
         
         // API base URL with root path support
         this.apiBase = window.ROOT_PATH ? `${window.ROOT_PATH}/api` : '/api';
@@ -88,18 +89,33 @@ class BlockTimeAnalytics {
         this.chart = new Chart(ctx, {
             type: 'line',
             data: {
-                labels: [],
-                datasets: [{
-                    label: 'Block Time (seconds)',
-                    data: [],
-                    borderColor: '#3b82f6',
-                    backgroundColor: 'rgba(59, 130, 246, 0.1)',
-                    borderWidth: 2,
-                    fill: true,
-                    tension: 0.1,
-                    pointRadius: 3,
-                    pointHoverRadius: 5
-                }]
+                datasets: [
+                    {
+                        label: 'Block Time (seconds)',
+                        data: [],
+                        borderColor: '#3b82f6',
+                        backgroundColor: 'rgba(59, 130, 246, 0.1)',
+                        borderWidth: 2,
+                        fill: true,
+                        tension: 0.1,
+                        pointRadius: 3,
+                        pointHoverRadius: 5,
+                        yAxisID: 'yTime'
+                    },
+                    {
+                        // Block sizes bucketed evenly across the chart's time range
+                        label: 'Block Size (KB)',
+                        data: [],
+                        borderColor: '#10b981',
+                        backgroundColor: 'rgba(16, 185, 129, 0.08)',
+                        borderWidth: 2,
+                        fill: false,
+                        tension: 0.0,
+                        pointRadius: 0,
+                        pointHoverRadius: 4,
+                        yAxisID: 'ySize'
+                    }
+                ]
             },
             options: {
                 responsive: true,
@@ -124,18 +140,30 @@ class BlockTimeAnalytics {
                             text: 'Time'
                         }
                     },
-                    y: {
+                    yTime: {
+                        position: 'left',
                         title: {
                             display: true,
                             text: 'Block Time (seconds)'
                         },
                         beginAtZero: false
+                    },
+                    ySize: {
+                        position: 'right',
+                        title: {
+                            display: true,
+                            text: 'Block Size (KB)'
+                        },
+                        beginAtZero: true,
+                        grid: {
+                            drawOnChartArea: false
+                        }
                     }
                 },
                 plugins: {
                     title: {
                         display: true,
-                        text: 'Tellor Layer Block Time Over Time'
+                        text: 'Tellor Layer Block Time & Block Size Over Time'
                     },
                     legend: {
                         display: true,
@@ -144,18 +172,35 @@ class BlockTimeAnalytics {
                     tooltip: {
                         callbacks: {
                             label: function(context) {
-                                return `Block Time: ${context.parsed.y.toFixed(3)} seconds`;
+                                if (context.datasetIndex === 0) {
+                                    return `Block Time: ${context.parsed.y.toFixed(3)} seconds`;
+                                } else {
+                                    const raw = context.raw;
+                                    const kb = context.parsed.y.toFixed(2);
+                                    if (raw && raw.is_spike) {
+                                        const h = raw.height ? ` — block ${raw.height}` : '';
+                                        return `⚠ SPIKE: ${kb} KB${h}`;
+                                    }
+                                    const extra = raw && raw.block_count ? ` (avg of ${raw.block_count} blocks)` : '';
+                                    return `Block Size: ${kb} KB${extra}`;
+                                }
                             },
                             afterLabel: function(context) {
+                                if (context.datasetIndex !== 0) return [];
                                 const dataPoint = context.raw.originalData;
-                                if (dataPoint) {
-                                    return [
-                                        `Height Range: ${dataPoint.height_range}`,
-                                        `Blocks: ${dataPoint.blocks_counted}`,
-                                        `Time Span: ${dataPoint.time_span_seconds}s`
-                                    ];
+                                if (!dataPoint) return [];
+                                const lines = [
+                                    `Height Range: ${dataPoint.height_range}`,
+                                    `Blocks: ${dataPoint.blocks_counted}`,
+                                    `Time Span: ${dataPoint.time_span_seconds}s`
+                                ];
+                                if (dataPoint.max_block_size_bytes != null) {
+                                    lines.push(`Max Block Size: ${(dataPoint.max_block_size_bytes / 1024).toFixed(2)} KB`);
                                 }
-                                return [];
+                                if (dataPoint.avg_tx_count != null) {
+                                    lines.push(`Avg Txs/Block: ${dataPoint.avg_tx_count}`);
+                                }
+                                return lines;
                             }
                         }
                     }
@@ -170,17 +215,32 @@ class BlockTimeAnalytics {
         try {
             console.log(`Loading block time data for ${this.currentTimeRange} hours`);
             
-            const response = await fetch(`${this.apiBase}/block-time/data?hours_back=${this.currentTimeRange}`);
+            // Fetch block-time intervals and recent block sizes in parallel.
+            // Pass the same hours_back so block size buckets span the full chart window.
+            const [blockTimeResponse, blockSizeResponse] = await Promise.all([
+                fetch(`${this.apiBase}/block-time/data?hours_back=${this.currentTimeRange}`),
+                fetch(`${this.apiBase}/block-size/recent?hours_back=${this.currentTimeRange}&buckets=${this.blockSizeLimit}`)
+            ]);
             
-            if (!response.ok) {
-                throw new Error(`HTTP error! status: ${response.status}`);
+            if (!blockTimeResponse.ok) {
+                throw new Error(`HTTP error! status: ${blockTimeResponse.status}`);
             }
             
-            const data = await response.json();
+            const data = await blockTimeResponse.json();
             console.log('Block time data loaded:', data);
             
+            // Individual block sizes (best-effort; don't fail if endpoint missing)
+            let recentBlocks = [];
+            if (blockSizeResponse.ok) {
+                const bsData = await blockSizeResponse.json();
+                recentBlocks = bsData.blocks || [];
+                console.log(`Loaded ${recentBlocks.length} individual block size records`);
+            } else {
+                console.warn('Could not load individual block sizes:', blockSizeResponse.status);
+            }
+            
             this.currentData = data;
-            this.updateChart(data);
+            this.updateChart(data, recentBlocks);
             this.updateTable(data);
             this.updateStats(data);
             
@@ -241,23 +301,44 @@ class BlockTimeAnalytics {
         }
     }
     
-    updateChart(data) {
+    updateChart(data, recentBlocks = []) {
         if (!this.chart || !data.block_times) {
             return;
         }
         
-        // Prepare chart data
-        const chartData = data.block_times.map(item => ({
+        // Dataset 0: block time intervals
+        const blockTimeData = data.block_times.map(item => ({
             x: new Date(item.datetime),
             y: item.block_time_seconds,
             originalData: item
         }));
         
-        // Update chart
-        this.chart.data.datasets[0].data = chartData;
-        this.chart.update('none'); // Use 'none' for faster updates without animation
+        // Dataset 1: block sizes bucketed evenly across the chart's time range,
+        // with spike blocks injected at their actual timestamps so they are never averaged away.
+        const filteredBlocks = recentBlocks.filter(b => b.block_size_bytes != null && b.timestamp);
+        const individualSizeData = filteredBlocks.map(b => ({
+            x: new Date(b.timestamp),
+            y: b.block_size_bytes / 1024,
+            block_count: b.block_count,
+            is_spike: b.is_spike || false,
+            height: b.height || null,
+        }));
+
+        // Per-point styling arrays: spike blocks get a visible red dot, others get no dot
+        const pointRadii         = filteredBlocks.map(b => b.is_spike ? 5 : 0);
+        const pointHoverRadii    = filteredBlocks.map(b => b.is_spike ? 7 : 4);
+        const pointColors        = filteredBlocks.map(b => b.is_spike ? '#ff4444' : '#10b981');
+        const pointBorderColors  = filteredBlocks.map(b => b.is_spike ? '#ff0000' : '#10b981');
+
+        this.chart.data.datasets[0].data = blockTimeData;
+        this.chart.data.datasets[1].data = individualSizeData;
+        this.chart.data.datasets[1].pointRadius        = pointRadii;
+        this.chart.data.datasets[1].pointHoverRadius   = pointHoverRadii;
+        this.chart.data.datasets[1].pointBackgroundColor = pointColors;
+        this.chart.data.datasets[1].pointBorderColor   = pointBorderColors;
+        this.chart.update('none');
         
-        console.log(`Chart updated with ${chartData.length} data points`);
+        console.log(`Chart updated: ${blockTimeData.length} block-time points, ${individualSizeData.length} block-size points`);
     }
     
     updateTable(data) {
@@ -267,7 +348,7 @@ class BlockTimeAnalytics {
         }
         
         if (data.block_times.length === 0) {
-            tableBody.innerHTML = '<tr><td colspan="5" class="text-center">No block time data available for this time range</td></tr>';
+            tableBody.innerHTML = '<tr><td colspan="7" class="text-center">No block time data available for this time range</td></tr>';
             return;
         }
         
@@ -277,6 +358,12 @@ class BlockTimeAnalytics {
         tableBody.innerHTML = sortedData.map(item => {
             const date = new Date(item.datetime);
             const formattedDate = date.toLocaleString();
+            const avgSize = item.avg_block_size_bytes != null
+                ? `${(item.avg_block_size_bytes / 1024).toFixed(2)} KB`
+                : '—';
+            const maxSize = item.max_block_size_bytes != null
+                ? `${(item.max_block_size_bytes / 1024).toFixed(2)} KB`
+                : '—';
             
             return `
                 <tr>
@@ -285,6 +372,8 @@ class BlockTimeAnalytics {
                     <td>${item.height_range}</td>
                     <td>${item.blocks_counted}</td>
                     <td>${item.time_span_seconds}</td>
+                    <td>${avgSize}</td>
+                    <td>${maxSize}</td>
                 </tr>
             `;
         }).join('');
@@ -323,6 +412,27 @@ class BlockTimeAnalytics {
                 timeRangeDisplayEl.textContent = `${Math.round(hours / 720)} months`;
             }
         }
+
+        // Block size stats (only present when layer_block_sizes has data)
+        const sizePoints = (data.block_times || []).filter(p => p.avg_block_size_bytes != null);
+
+        const avgBlockSizeEl = document.getElementById('avgBlockSize');
+        const maxBlockSizeEl = document.getElementById('maxBlockSize');
+        const blocksTrackedEl = document.getElementById('blocksTracked');
+
+        if (sizePoints.length > 0) {
+            const overallAvg = sizePoints.reduce((s, p) => s + p.avg_block_size_bytes, 0) / sizePoints.length;
+            const overallMax = Math.max(...sizePoints.map(p => p.max_block_size_bytes));
+            const totalBlocks = sizePoints.reduce((s, p) => s + p.blocks_counted, 0);
+
+            if (avgBlockSizeEl) avgBlockSizeEl.textContent = `${(overallAvg / 1024).toFixed(2)} KB`;
+            if (maxBlockSizeEl) maxBlockSizeEl.textContent = `${(overallMax / 1024).toFixed(2)} KB`;
+            if (blocksTrackedEl) blocksTrackedEl.textContent = totalBlocks.toLocaleString();
+        } else {
+            if (avgBlockSizeEl) avgBlockSizeEl.textContent = 'No data yet';
+            if (maxBlockSizeEl) maxBlockSizeEl.textContent = 'No data yet';
+            if (blocksTrackedEl) blocksTrackedEl.textContent = '0';
+        }
     }
     
     exportData() {
@@ -332,7 +442,7 @@ class BlockTimeAnalytics {
         }
         
         // Convert data to CSV
-        const headers = ['Timestamp', 'DateTime', 'Block Time (seconds)', 'Height Range', 'Blocks Counted', 'Time Span (seconds)'];
+        const headers = ['Timestamp', 'DateTime', 'Block Time (seconds)', 'Height Range', 'Blocks Counted', 'Time Span (seconds)', 'Avg Block Size (bytes)', 'Max Block Size (bytes)'];
         const csvContent = [
             headers.join(','),
             ...this.currentData.block_times.map(item => [
@@ -341,7 +451,9 @@ class BlockTimeAnalytics {
                 item.block_time_seconds,
                 `"${item.height_range}"`,
                 item.blocks_counted,
-                item.time_span_seconds
+                item.time_span_seconds,
+                item.avg_block_size_bytes ?? '',
+                item.max_block_size_bytes ?? ''
             ].join(','))
         ].join('\n');
         
@@ -514,7 +626,7 @@ class BlockTimeAnalytics {
         // Update table to show error
         const tableBody = document.getElementById('blockTimeTableBody');
         if (tableBody) {
-            tableBody.innerHTML = `<tr><td colspan="5" class="text-center text-error">Error: ${message}</td></tr>`;
+            tableBody.innerHTML = `<tr><td colspan="7" class="text-center text-error">Error: ${message}</td></tr>`;
         }
         
         // Update stats to show error (but preserve current block height if available)

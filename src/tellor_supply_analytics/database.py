@@ -26,6 +26,7 @@ class BalancesDatabase:
         self.init_database()
         self.migrate_add_reporter_power_column()
         self.migrate_add_bridge_v2_column()
+        self.migrate_add_block_size_tables()
     
     def migrate_add_reporter_power_column(self):
         """Add total_reporter_power column to existing unified_snapshots table if it doesn't exist."""
@@ -59,6 +60,37 @@ class BalancesDatabase:
                 logger.info("Successfully added bridge_v2_balance_trb column")
             else:
                 logger.debug("bridge_v2_balance_trb column already exists")
+
+    def migrate_add_block_size_tables(self) -> None:
+        """Create layer_block_sizes and block_size_alerts tables if they don't exist."""
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute('''
+                CREATE TABLE IF NOT EXISTS layer_block_sizes (
+                    height           INTEGER PRIMARY KEY,
+                    timestamp        TEXT,
+                    block_size_bytes INTEGER,
+                    tx_count         INTEGER,
+                    gas_used         INTEGER,
+                    num_events       INTEGER,
+                    created_at       TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            ''')
+            conn.execute('''
+                CREATE INDEX IF NOT EXISTS idx_block_sizes_height
+                ON layer_block_sizes (height)
+            ''')
+            conn.execute('''
+                CREATE TABLE IF NOT EXISTS block_size_alerts (
+                    id       INTEGER PRIMARY KEY AUTOINCREMENT,
+                    sent_at  TEXT,
+                    metric   TEXT,
+                    height   INTEGER,
+                    value    REAL,
+                    zscore   REAL,
+                    message  TEXT
+                )
+            ''')
+        logger.debug("Block size tables ensured")
 
     def init_database(self):
         """Initialize database tables."""
@@ -809,6 +841,95 @@ class BalancesDatabase:
         except Exception as e:
             logger.error(f"Error deleting unified snapshot {snapshot_id}: {e}")
             return False
+
+    # ------------------------------------------------------------------
+    # Block size helpers
+    # ------------------------------------------------------------------
+
+    def insert_block_size(
+        self,
+        height: int,
+        timestamp: str,
+        block_size_bytes: int,
+        tx_count: int,
+        gas_used: int,
+        num_events: int,
+    ) -> None:
+        """Insert a single block's metrics (INSERT OR IGNORE — idempotent)."""
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute(
+                '''
+                INSERT OR IGNORE INTO layer_block_sizes
+                    (height, timestamp, block_size_bytes, tx_count, gas_used, num_events)
+                VALUES (?, ?, ?, ?, ?, ?)
+                ''',
+                (height, timestamp, block_size_bytes, tx_count, gas_used, num_events),
+            )
+
+    def get_recent_block_sizes(self, window: int) -> List[Dict]:
+        """Return the most recent *window* rows ordered height ASC (for the analyzer)."""
+        with sqlite3.connect(self.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute(
+                'SELECT * FROM layer_block_sizes ORDER BY height DESC LIMIT ?',
+                (window,),
+            ).fetchall()
+        return [dict(r) for r in reversed(rows)]
+
+    def get_block_sizes_in_range(self, min_height: int, max_height: int) -> List[Dict]:
+        """Return all block size rows for heights in [min_height, max_height]."""
+        with sqlite3.connect(self.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute(
+                '''
+                SELECT * FROM layer_block_sizes
+                WHERE height >= ? AND height <= ?
+                ORDER BY height
+                ''',
+                (min_height, max_height),
+            ).fetchall()
+        return [dict(r) for r in rows]
+
+    def get_latest_block_size_height(self) -> Optional[int]:
+        """Return the highest height stored in layer_block_sizes, or None."""
+        with sqlite3.connect(self.db_path) as conn:
+            row = conn.execute(
+                'SELECT MAX(height) FROM layer_block_sizes'
+            ).fetchone()
+        return row[0] if row and row[0] is not None else None
+
+    def insert_block_size_alert(
+        self,
+        sent_at: str,
+        metric: str,
+        height: int,
+        value: float,
+        zscore: float,
+        message: str,
+    ) -> None:
+        """Record a fired Discord alert for cooldown tracking."""
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute(
+                '''
+                INSERT INTO block_size_alerts (sent_at, metric, height, value, zscore, message)
+                VALUES (?, ?, ?, ?, ?, ?)
+                ''',
+                (sent_at, metric, height, value, zscore, message),
+            )
+
+    def get_last_block_size_alert_time(self, metric: str) -> Optional[str]:
+        """Return ISO timestamp of the most recent alert for *metric*, or None."""
+        with sqlite3.connect(self.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            row = conn.execute(
+                '''
+                SELECT sent_at FROM block_size_alerts
+                WHERE metric = ?
+                ORDER BY id DESC LIMIT 1
+                ''',
+                (metric,),
+            ).fetchone()
+        return row['sent_at'] if row else None
 
     def get_snapshots_with_zero_values(self) -> List[Dict]:
         """
