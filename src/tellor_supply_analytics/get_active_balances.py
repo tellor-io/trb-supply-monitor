@@ -85,9 +85,6 @@ TRB_CONTRACT = os.getenv('TRB_CONTRACT')
 CURRENT_BRIDGE_CONTRACT = os.getenv('CURRENT_BRIDGE_CONTRACT')
 OLD_BRIDGE_CONTRACT_1 = os.getenv('OLD_BRIDGE_CONTRACT_1')
 
-# Bridge contract transition height
-BRIDGE_CONTRACT_TRANSITION_HEIGHT = 9569214
-
 # ERC20 ABI for balanceOf function
 ERC20_ABI = [
     {
@@ -102,25 +99,18 @@ ERC20_ABI = [
 
 def get_bridge_contract_for_height(layer_height: Optional[int]) -> str:
     """
-    Determine which bridge contract to use based on Tellor Layer height.
-    
-    Args:
-        layer_height: Tellor Layer block height, or None to use current contract
-        
-    Returns:
-        Bridge contract address to use
+    Return the legacy Bridge V1 contract for the singular bridge balance field.
+
+    The legacy active balances snapshot only stores one bridge balance, so that
+    field should represent the old TRBBridge (V1) balance instead of switching
+    to the current bridge contract after a transition height.
     """
-    # If no layer height provided, use current contract
-    if layer_height is None or layer_height >= BRIDGE_CONTRACT_TRANSITION_HEIGHT:
-        return CURRENT_BRIDGE_CONTRACT
-    
-    # For heights before transition, use old contract if available, otherwise fall back to current
     if OLD_BRIDGE_CONTRACT_1 and OLD_BRIDGE_CONTRACT_1.strip():
         return OLD_BRIDGE_CONTRACT_1
-    else:
-        logger.warning(f"OLD_BRIDGE_CONTRACT_1 not configured, using CURRENT_BRIDGE_CONTRACT for layer height {layer_height}")
-        logger.info(f"CURRENT_BRIDGE_CONTRACT: {CURRENT_BRIDGE_CONTRACT}")
-        return CURRENT_BRIDGE_CONTRACT
+
+    logger.warning("OLD_BRIDGE_CONTRACT_1 not configured, falling back to CURRENT_BRIDGE_CONTRACT")
+    logger.info(f"CURRENT_BRIDGE_CONTRACT: {CURRENT_BRIDGE_CONTRACT}")
+    return CURRENT_BRIDGE_CONTRACT
 
 
 class EnhancedActiveBalancesCollector:

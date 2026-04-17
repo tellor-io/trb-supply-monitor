@@ -610,35 +610,84 @@ async def get_block_time_data(
                 "message": "Insufficient data for block time calculation"
             }
         
-        # Calculate block times between consecutive rows
-        block_times = []
+        # Collect all height ranges first so we can do a single bulk block-size query
+        intervals = []
         for i in range(1, len(rows)):
             prev_row = rows[i-1]
             curr_row = rows[i]
-            
-            # Extract data
+
             prev_height = prev_row[1]
             prev_timestamp = prev_row[2]
             curr_height = curr_row[1]
             curr_timestamp = curr_row[2]
             curr_eth_timestamp = curr_row[0]
             curr_datetime = curr_row[3]
-            
-            # Calculate block time
+
             height_diff = curr_height - prev_height
             time_diff = curr_timestamp - prev_timestamp
-            
+
             if height_diff > 0 and time_diff > 0:
-                block_time_seconds = time_diff / height_diff
-                block_times.append({
-                    "timestamp": curr_eth_timestamp,
-                    "datetime": curr_datetime,
-                    "block_time_seconds": round(block_time_seconds, 3),
-                    "height_range": f"{prev_height}-{curr_height}",
-                    "blocks_counted": height_diff,
-                    "time_span_seconds": time_diff
-                })
-        
+                intervals.append((
+                    curr_eth_timestamp, curr_datetime,
+                    round(time_diff / height_diff, 3),
+                    prev_height, curr_height,
+                    height_diff, time_diff,
+                ))
+
+        # Bulk-fetch block size stats for all covered height ranges in one query
+        block_size_by_range: dict = {}
+        if intervals:
+            min_h = min(iv[3] for iv in intervals)
+            max_h = max(iv[4] for iv in intervals)
+            with sqlite3.connect(db.db_path) as conn:
+                cursor = conn.execute(
+                    '''
+                    SELECT height, block_size_bytes, tx_count
+                    FROM layer_block_sizes
+                    WHERE height >= ? AND height <= ?
+                    ''',
+                    (min_h, max_h),
+                )
+                size_rows = cursor.fetchall()
+            # Build a dict keyed by height for O(1) lookup
+            size_map = {r[0]: (r[1], r[2]) for r in size_rows}
+
+            # Aggregate per interval
+            for iv in intervals:
+                _, _, _, prev_h, curr_h, _, _ = iv
+                sizes = [size_map[h][0] for h in range(prev_h, curr_h + 1) if h in size_map]
+                txs = [size_map[h][1] for h in range(prev_h, curr_h + 1) if h in size_map]
+                if sizes:
+                    block_size_by_range[f"{prev_h}-{curr_h}"] = {
+                        "avg_block_size_bytes": round(sum(sizes) / len(sizes)),
+                        "max_block_size_bytes": max(sizes),
+                        "avg_tx_count": round(sum(txs) / len(txs), 1) if txs else None,
+                    }
+
+        # Build response list
+        block_times = []
+        for (curr_eth_timestamp, curr_datetime, block_time_seconds,
+             prev_height, curr_height, height_diff, time_diff) in intervals:
+            height_range = f"{prev_height}-{curr_height}"
+            entry = {
+                "timestamp": curr_eth_timestamp,
+                "datetime": curr_datetime,
+                "block_time_seconds": block_time_seconds,
+                "height_range": height_range,
+                "blocks_counted": height_diff,
+                "time_span_seconds": time_diff,
+            }
+            size_stats = block_size_by_range.get(height_range)
+            if size_stats:
+                entry["avg_block_size_bytes"] = size_stats["avg_block_size_bytes"]
+                entry["max_block_size_bytes"] = size_stats["max_block_size_bytes"]
+                entry["avg_tx_count"] = size_stats["avg_tx_count"]
+            else:
+                entry["avg_block_size_bytes"] = None
+                entry["max_block_size_bytes"] = None
+                entry["avg_tx_count"] = None
+            block_times.append(entry)
+
         return {
             "block_times": block_times,
             "count": len(block_times),
@@ -648,6 +697,101 @@ async def get_block_time_data(
         
     except Exception as e:
         logger.error(f"Error getting block time data: {e}")
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
+@app.get("/api/block-size/recent")
+async def get_recent_block_sizes(
+    hours_back: int = Query(24, description="Hours back to query (should match chart time range)", ge=1, le=8760),
+    buckets: int = Query(1000, description="Number of evenly-spaced time buckets to return", ge=10, le=5000)
+):
+    """
+    Return block size data bucketed into evenly-spaced time intervals covering the
+    requested time range.  Each bucket returns the average block size of all blocks
+    that fell within that interval, so the data always spans the full chart window.
+    """
+    try:
+        import sqlite3
+        from datetime import timezone
+
+        now_utc = datetime.now(timezone.utc)
+        cutoff_utc = now_utc - timedelta(hours=hours_back)
+
+        # ISO prefix match works for both "2024-01-15T12:34:56" and "2024-01-15T12:34:56Z"
+        cutoff_str = cutoff_utc.strftime("%Y-%m-%dT%H:%M:%S")
+
+        with sqlite3.connect(db.db_path) as conn:
+            rows = conn.execute(
+                '''
+                SELECT height, timestamp, block_size_bytes, tx_count
+                FROM layer_block_sizes
+                WHERE timestamp >= ?
+                ORDER BY height ASC
+                ''',
+                (cutoff_str,)
+            ).fetchall()
+
+        if not rows:
+            return {"blocks": [], "count": 0}
+
+        total_seconds = hours_back * 3600
+        bucket_width = total_seconds / buckets
+        start_ts = cutoff_utc.timestamp()
+
+        bucket_size_sum = [0.0] * buckets
+        bucket_block_count = [0] * buckets
+
+        # Parse all rows once into (unix_ts, block_size_bytes, height) tuples
+        parsed = []
+        for height, timestamp, block_size_bytes, _tx_count in rows:
+            if block_size_bytes is None or not timestamp:
+                continue
+            try:
+                ts = datetime.fromisoformat(timestamp.replace("Z", "+00:00")).timestamp()
+            except Exception:
+                continue
+            parsed.append((ts, block_size_bytes, height))
+            idx = int((ts - start_ts) / bucket_width)
+            if 0 <= idx < buckets:
+                bucket_size_sum[idx] += block_size_bytes
+                bucket_block_count[idx] += 1
+
+        # Overall average across all blocks in the time range
+        overall_avg = (
+            sum(b for _, b, _ in parsed) / len(parsed) if parsed else 0
+        )
+        spike_threshold = overall_avg * 2.0
+
+        # Emit one entry per non-empty bucket, timestamped at the bucket midpoint
+        result = []
+        for i in range(buckets):
+            if bucket_block_count[i] > 0:
+                mid_ts = start_ts + (i + 0.5) * bucket_width
+                result.append({
+                    "timestamp": datetime.fromtimestamp(mid_ts, tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                    "block_size_bytes": round(bucket_size_sum[i] / bucket_block_count[i]),
+                    "block_count": bucket_block_count[i],
+                    "is_spike": False,
+                })
+
+        # Inject individual spike blocks so they're never averaged away
+        if spike_threshold > 0:
+            for ts, block_size_bytes, height in parsed:
+                if block_size_bytes > spike_threshold:
+                    result.append({
+                        "timestamp": datetime.fromtimestamp(ts, tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                        "block_size_bytes": block_size_bytes,
+                        "block_count": 1,
+                        "is_spike": True,
+                        "height": height,
+                    })
+
+        # Sort chronologically so the chart line draws correctly
+        result.sort(key=lambda r: r["timestamp"])
+
+        return {"blocks": result, "count": len(result), "overall_avg_bytes": round(overall_avg)}
+    except Exception as e:
+        logger.error(f"Error getting recent block sizes: {e}")
         raise HTTPException(status_code=500, detail="Internal server error")
 
 

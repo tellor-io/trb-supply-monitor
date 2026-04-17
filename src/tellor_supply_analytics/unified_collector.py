@@ -53,10 +53,7 @@ ETHEREUM_RPC_URL = os.getenv('ETHEREUM_RPC_URL', 'https://rpc.sepolia.org')
 TRB_CONTRACT = os.getenv('TRB_CONTRACT')
 CURRENT_BRIDGE_CONTRACT = os.getenv('CURRENT_BRIDGE_CONTRACT')
 OLD_BRIDGE_CONTRACT_1 = os.getenv('OLD_BRIDGE_CONTRACT_1')
-BRIDGE_V2_CONTRACT = os.getenv('TRBBRIDGEV2_CONTRACT_ADDRESS')
-
-# Bridge contract transition height
-BRIDGE_CONTRACT_TRANSITION_HEIGHT = 9569214
+BRIDGE_V2_CONTRACT = os.getenv('TRBBRIDGEV2_CONTRACT_ADDRESS') or CURRENT_BRIDGE_CONTRACT
 
 # Bridge CSV configuration with environment variable support
 BRIDGE_DEPOSITS_CSV_PATH = os.getenv('BRIDGE_DEPOSITS_CSV_PATH', 'example_bridge_deposits.csv')
@@ -74,26 +71,18 @@ ERC20_ABI = [
 ]
 
 
-def get_bridge_contract_for_height(layer_height: Optional[int]) -> str:
-    """
-    Determine which bridge contract to use based on Tellor Layer height.
-    
-    Args:
-        layer_height: Tellor Layer block height, or None to use current contract
-        
-    Returns:
-        Bridge contract address to use
-    """
-    # If no layer height provided, use current contract
-    if layer_height is None or layer_height >= BRIDGE_CONTRACT_TRANSITION_HEIGHT:
-        return CURRENT_BRIDGE_CONTRACT
-    
-    # For heights before transition, use old contract if available, otherwise fall back to current
+def get_legacy_bridge_contract() -> Optional[str]:
+    """Return the legacy V1 bridge contract address."""
     if OLD_BRIDGE_CONTRACT_1 and OLD_BRIDGE_CONTRACT_1.strip():
         return OLD_BRIDGE_CONTRACT_1
-    else:
-        logger.warning(f"OLD_BRIDGE_CONTRACT_1 not configured, using CURRENT_BRIDGE_CONTRACT for layer height {layer_height}")
-        return CURRENT_BRIDGE_CONTRACT
+    return None
+
+
+def get_current_bridge_v2_contract() -> Optional[str]:
+    """Return the current bridge contract address (V2 on mainnet)."""
+    if BRIDGE_V2_CONTRACT and BRIDGE_V2_CONTRACT.strip():
+        return BRIDGE_V2_CONTRACT
+    return None
 
 
 class UnifiedDataCollector:
@@ -314,12 +303,12 @@ class UnifiedDataCollector:
     
     def collect_bridge_data_for_block(self, block_number: Optional[int], block_timestamp: int, layer_height: Optional[int] = None) -> Optional[float]:
         """
-        Collect bridge balance data for a specific Ethereum block.
+        Collect legacy Bridge V1 balance for a specific Ethereum block.
         
         Args:
             block_number: Ethereum block number, or None for latest block
             block_timestamp: Ethereum block timestamp
-            layer_height: Tellor Layer block height (used to determine which bridge contract to query)
+            layer_height: Unused. Kept for backward compatibility with existing call sites.
             
         Returns:
             Bridge balance in TRB, or None if failed
@@ -329,9 +318,12 @@ class UnifiedDataCollector:
             return None
             
         try:
-            # Determine which bridge contract to use based on layer height
-            bridge_contract = get_bridge_contract_for_height(layer_height)
-            logger.info(f"Using bridge contract {bridge_contract} for layer height {layer_height}")
+            bridge_contract = get_legacy_bridge_contract()
+            if not bridge_contract:
+                logger.debug("OLD_BRIDGE_CONTRACT_1 not configured, skipping Bridge V1 balance")
+                return None
+
+            logger.info(f"Using legacy Bridge V1 contract {bridge_contract}")
             
             # Get bridge balance at specific block (or latest if block_number is None)
             block_id = block_number if block_number is not None else 'latest'
@@ -353,7 +345,7 @@ class UnifiedDataCollector:
     
     def collect_bridge_v2_data_for_block(self, block_number: Optional[int], block_timestamp: int) -> Optional[float]:
         """
-        Collect V2 bridge balance data for a specific Ethereum block.
+        Collect current Bridge V2 balance for a specific Ethereum block.
         
         Args:
             block_number: Ethereum block number, or None for latest block
@@ -366,14 +358,15 @@ class UnifiedDataCollector:
             logger.error("Web3 or TRB contract not initialized")
             return None
         
-        if not BRIDGE_V2_CONTRACT:
-            logger.debug("TRBBRIDGEV2_CONTRACT_ADDRESS not configured, skipping V2 bridge balance")
+        bridge_v2_contract = get_current_bridge_v2_contract()
+        if not bridge_v2_contract:
+            logger.debug("No current bridge contract configured, skipping V2 bridge balance")
             return None
             
         try:
             block_id = block_number if block_number is not None else 'latest'
             balance = self.trb_contract.functions.balanceOf(
-                Web3.to_checksum_address(BRIDGE_V2_CONTRACT)
+                Web3.to_checksum_address(bridge_v2_contract)
             ).call(block_identifier=block_id)
             
             balance_trb = balance / (10 ** 18)
