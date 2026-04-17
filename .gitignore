@@ -2,6 +2,9 @@ layerd
 .env
 supply_data.csv
 active_addresses.csv
+active_addresses_0.csv
+module_tokens.csv
+reporters-check.json
 supply_data_all.csv
 1.json
 accounts_example.json
