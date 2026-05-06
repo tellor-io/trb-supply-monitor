@@ -142,6 +142,7 @@ class EnhancedActiveBalancesCollector:
         self.balance_endpoint_template = f"{self.base_url}/cosmos/bank/v1beta1/balances/{{}}"
         self.session = requests.Session()
         self.layerd_path = './layerd'
+        self.last_layerd_error = None
         
         # Initialize database
         self.db = BalancesDatabase(db_path)
@@ -412,7 +413,14 @@ class EnhancedActiveBalancesCollector:
             
             result = self.run_layerd_command(cmd_args)
             if not result:
-                logger.debug(f"No balance data for {address} at height {height} (address likely didn't exist yet)")
+                if self.last_layerd_error != "invalid_argument":
+                    raise RuntimeError(
+                        f"Layer RPC failed while fetching balance for {address} at height {height}"
+                    )
+                logger.debug(
+                    f"No balance data for {address} at height {height} "
+                    "(address likely didn't exist yet)"
+                )
                 return 0, 0.0
             
             balances = result.get('balances', [])
@@ -430,11 +438,12 @@ class EnhancedActiveBalancesCollector:
             return loya_balance, loya_balance_trb
             
         except Exception as e:
-            logger.debug(f"Error fetching balance for {address} at height {height}: {e}")
-            return 0, 0.0
+            logger.error(f"Error fetching balance for {address} at height {height}: {e}")
+            raise
     
     def run_layerd_command(self, cmd_args: List[str]) -> Optional[Dict]:
         """Run a layerd command and return JSON output."""
+        self.last_layerd_error = None
         try:
             cmd = [self.layerd_path] + cmd_args
             logger.debug(f"Running command: {' '.join(cmd)}")
@@ -451,9 +460,11 @@ class EnhancedActiveBalancesCollector:
                 if "rpc error: code = InvalidArgument" in error_msg:
                     # This is expected when querying addresses that didn't exist at historical heights
                     logger.debug(f"RPC InvalidArgument error (address likely didn't exist at this height): {error_msg}")
+                    self.last_layerd_error = "invalid_argument"
                     return None
                 else:
                     logger.error(f"Command failed: {error_msg}")
+                    self.last_layerd_error = "command_failed"
                     return None
             
             # Parse JSON output
@@ -462,13 +473,16 @@ class EnhancedActiveBalancesCollector:
             except json.JSONDecodeError as e:
                 logger.error(f"Failed to parse JSON output: {e}")
                 logger.debug(f"Raw output: {result.stdout}")
+                self.last_layerd_error = "json_decode"
                 return None
                 
         except subprocess.TimeoutExpired:
             logger.error("Command timed out")
+            self.last_layerd_error = "timeout"
             return None
         except Exception as e:
             logger.error(f"Error running command: {e}")
+            self.last_layerd_error = "exception"
             return None
     
     def get_current_height(self) -> Optional[int]:
