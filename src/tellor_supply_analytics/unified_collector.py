@@ -17,6 +17,9 @@ import os
 import logging
 import time
 import sys
+import json
+import re
+import requests
 from datetime import datetime, timezone, timedelta
 from typing import Dict, List, Optional, Tuple, Set
 from pathlib import Path
@@ -58,6 +61,8 @@ BRIDGE_V2_CONTRACT = os.getenv('TRBBRIDGEV2_CONTRACT_ADDRESS') or CURRENT_BRIDGE
 # Bridge CSV configuration with environment variable support
 BRIDGE_DEPOSITS_CSV_PATH = os.getenv('BRIDGE_DEPOSITS_CSV_PATH', 'example_bridge_deposits.csv')
 BRIDGE_WITHDRAWALS_CSV_PATH = os.getenv('BRIDGE_WITHDRAWALS_CSV_PATH', 'example_bridge_withdrawals.csv')
+RPC_HEALTH_MAX_STALE_SECONDS = int(os.getenv('RPC_HEALTH_MAX_STALE_SECONDS', '600'))
+RPC_HEALTH_TIMEOUT_SECONDS = int(os.getenv('RPC_HEALTH_TIMEOUT_SECONDS', '10'))
 
 # ERC20 ABI for balanceOf function
 ERC20_ABI = [
@@ -85,6 +90,18 @@ def get_current_bridge_v2_contract() -> Optional[str]:
     return None
 
 
+def parse_cosmos_timestamp(timestamp: str) -> datetime:
+    """Parse Cosmos timestamps that may include nanosecond precision."""
+    if '.' in timestamp and 'Z' in timestamp:
+        date_part, fractional_part = timestamp.split('.')
+        fractional_part = fractional_part.rstrip('Z')
+        if len(fractional_part) > 6:
+            fractional_part = fractional_part[:6]
+        timestamp = f"{date_part}.{fractional_part}Z"
+
+    return datetime.fromisoformat(timestamp.replace('Z', '+00:00'))
+
+
 class UnifiedDataCollector:
     """
     Unified data collector that uses Ethereum block timestamps as the primary timeline.
@@ -107,17 +124,39 @@ class UnifiedDataCollector:
         self.db = BalancesDatabase(db_path)
         
         # Initialize Web3 connection for Ethereum data
+        self.w3 = None
+        self.trb_contract = None
+        self._initialize_web3()
+        
+        # Initialize component collectors
+        self.supply_collector = SupplyDataCollector(db_path=db_path, use_csv=False)
+        self.balance_collector = EnhancedActiveBalancesCollector(db_path=db_path, use_csv=False)
+        
+        logger.info("Unified data collector initialized")
+
+    def _initialize_web3(self) -> bool:
+        """Initialize or refresh the Web3 connection and TRB contract."""
+        if not ETHEREUM_RPC_URL:
+            logger.error("ETHEREUM_RPC_URL is not configured")
+            self.w3 = None
+            self.trb_contract = None
+            return False
+
         try:
             self.w3 = Web3(Web3.HTTPProvider(ETHEREUM_RPC_URL))
             if not self.w3.is_connected():
                 logger.warning(f"Failed to connect to Ethereum RPC: {ETHEREUM_RPC_URL}")
                 self.w3 = None
-            else:
-                logger.info(f"Connected to Ethereum RPC: {ETHEREUM_RPC_URL}")
+                self.trb_contract = None
+                return False
+
+            logger.info(f"Connected to Ethereum RPC: {ETHEREUM_RPC_URL}")
         except Exception as e:
             logger.error(f"Error connecting to Ethereum RPC: {e}")
             self.w3 = None
-            
+            self.trb_contract = None
+            return False
+
         # Initialize TRB contract
         if self.w3:
             try:
@@ -131,12 +170,208 @@ class UnifiedDataCollector:
                 self.trb_contract = None
         else:
             self.trb_contract = None
-        
-        # Initialize component collectors
-        self.supply_collector = SupplyDataCollector(db_path=db_path, use_csv=False)
-        self.balance_collector = EnhancedActiveBalancesCollector(db_path=db_path, use_csv=False)
-        
-        logger.info("Unified data collector initialized")
+
+        return self.w3 is not None and self.trb_contract is not None
+
+    def _is_fresh_timestamp(self, timestamp: int, label: str) -> bool:
+        now = int(datetime.now(timezone.utc).timestamp())
+        age = now - timestamp
+
+        if age < -60:
+            logger.error(f"{label} latest block timestamp is in the future: {timestamp}")
+            return False
+
+        if age > RPC_HEALTH_MAX_STALE_SECONDS:
+            logger.error(
+                f"{label} latest block is stale by {age} seconds "
+                f"(max allowed: {RPC_HEALTH_MAX_STALE_SECONDS})"
+            )
+            return False
+
+        return True
+
+    def check_ethereum_rpc_health(self) -> bool:
+        """Verify the EVM RPC is connected, current, and serving block data."""
+        if not self.w3 or not self.trb_contract:
+            logger.warning("Ethereum RPC or TRB contract not initialized; attempting reconnect")
+            self._initialize_web3()
+
+        if not self.w3 or not self.trb_contract:
+            logger.error("Ethereum RPC health check failed: Web3/TRB contract unavailable")
+            return False
+
+        try:
+            latest_block = self.w3.eth.get_block('latest')
+            latest_number = int(latest_block.get('number', 0))
+            latest_timestamp = int(latest_block.get('timestamp', 0))
+        except Exception as e:
+            logger.error(f"Ethereum RPC health check failed: {e}")
+            return False
+
+        if latest_number <= 0 or latest_timestamp <= 0:
+            logger.error(f"Ethereum RPC health check failed: invalid latest block {latest_block}")
+            return False
+
+        latest_db_snapshots = self.db.get_unified_snapshots(limit=1)
+        if latest_db_snapshots:
+            latest_db_timestamp = latest_db_snapshots[0].get('eth_block_timestamp', 0)
+            if latest_timestamp < latest_db_timestamp:
+                logger.error(
+                    f"Ethereum RPC latest timestamp ({latest_timestamp}) is older than latest DB "
+                    f"timestamp ({latest_db_timestamp}); refusing to collect"
+                )
+                return False
+
+        return self._is_fresh_timestamp(latest_timestamp, "Ethereum RPC")
+
+    def check_layer_rpc_health(self) -> bool:
+        """Verify the Tellor Layer RPC is reachable, synced, and serving current status."""
+        rpc_url = os.getenv('TELLOR_LAYER_RPC_URL')
+        if not rpc_url:
+            logger.error("TELLOR_LAYER_RPC_URL is not configured")
+            return False
+
+        try:
+            response = requests.get(
+                f"{rpc_url.rstrip('/')}/status",
+                timeout=RPC_HEALTH_TIMEOUT_SECONDS,
+            )
+            response.raise_for_status()
+            data = response.json()
+            sync_info = data["result"]["sync_info"]
+            latest_height = int(sync_info["latest_block_height"])
+            latest_time = parse_cosmos_timestamp(sync_info["latest_block_time"])
+            catching_up_raw = sync_info.get("catching_up", False)
+            catching_up = (
+                catching_up_raw.lower() == "true"
+                if isinstance(catching_up_raw, str)
+                else bool(catching_up_raw)
+            )
+        except (requests.RequestException, KeyError, ValueError, json.JSONDecodeError) as e:
+            logger.error(f"Tellor Layer RPC health check failed: {e}")
+            return False
+
+        if latest_height <= 0:
+            logger.error(f"Tellor Layer RPC health check failed: invalid height {latest_height}")
+            return False
+
+        if catching_up:
+            logger.error("Tellor Layer RPC health check failed: node is catching up")
+            return False
+
+        return self._is_fresh_timestamp(int(latest_time.timestamp()), "Tellor Layer RPC")
+
+    def check_layer_api_health(self) -> bool:
+        """Verify the Tellor Layer REST API endpoints used by collection are healthy."""
+        api_url = os.getenv('LAYER_API_URL')
+        if not api_url:
+            logger.error("LAYER_API_URL is not configured")
+            return False
+
+        base_url = api_url.rstrip('/')
+
+        try:
+            latest_data = None
+            latest_error: Optional[Exception] = None
+            for latest_path in (
+                "/cosmos/base/tendermint/v1beta1/blocks/latest",
+                "/blocks/latest",
+            ):
+                try:
+                    latest_response = requests.get(
+                        f"{base_url}{latest_path}",
+                        timeout=RPC_HEALTH_TIMEOUT_SECONDS,
+                    )
+                    latest_response.raise_for_status()
+                    latest_data = latest_response.json()
+                    break
+                except (requests.RequestException, ValueError) as e:
+                    latest_error = e
+
+            if latest_data is None:
+                raise latest_error or ValueError("latest block response was empty")
+
+            latest_header = latest_data.get("block", {}).get("header", {})
+            latest_height = int(latest_header["height"])
+            latest_time = parse_cosmos_timestamp(latest_header["time"])
+
+            staking_response = requests.get(
+                f"{base_url}/cosmos/staking/v1beta1/pool",
+                timeout=RPC_HEALTH_TIMEOUT_SECONDS,
+            )
+            staking_response.raise_for_status()
+            pool = staking_response.json().get("pool", {})
+
+            accounts_response = requests.get(
+                f"{base_url}/cosmos/auth/v1beta1/accounts",
+                params={"pagination.limit": "1"},
+                timeout=RPC_HEALTH_TIMEOUT_SECONDS,
+            )
+            accounts_response.raise_for_status()
+            accounts_response.json()
+        except (requests.RequestException, KeyError, ValueError, json.JSONDecodeError) as e:
+            logger.error(f"Tellor Layer API health check failed: {e}")
+            return False
+
+        if latest_height <= 0:
+            logger.error(f"Tellor Layer API health check failed: invalid height {latest_height}")
+            return False
+
+        if "bonded_tokens" not in pool or "not_bonded_tokens" not in pool:
+            logger.error(
+                "Tellor Layer API health check failed: staking pool response missing token fields"
+            )
+            return False
+
+        return self._is_fresh_timestamp(int(latest_time.timestamp()), "Tellor Layer API")
+
+    def endpoints_are_healthy(self) -> bool:
+        """Return True only when all external dependencies required for collection are healthy."""
+        checks = {
+            "Ethereum RPC": self.check_ethereum_rpc_health(),
+            "Tellor Layer RPC": self.check_layer_rpc_health(),
+            "Tellor Layer API": self.check_layer_api_health(),
+        }
+
+        unhealthy = [name for name, healthy in checks.items() if not healthy]
+        if unhealthy:
+            logger.error(
+                "Skipping unified collection because unhealthy endpoints were detected: "
+                f"{', '.join(unhealthy)}"
+            )
+            return False
+
+        logger.info("All unified collection endpoints are healthy")
+        return True
+
+    def _parse_pruned_block_floor(self, error: Exception) -> Optional[int]:
+        """Extract the lowest available block from common pruned-node RPC errors."""
+        match = re.search(r"history is available from block\s+(\d+)", str(error))
+        if not match:
+            return None
+
+        try:
+            return int(match.group(1))
+        except ValueError:
+            return None
+
+    def get_ethereum_search_lower_bound(self, latest_block_number: int) -> int:
+        """Return the first Ethereum block available from the configured RPC."""
+        try:
+            self.w3.eth.get_block(1)
+            return 1
+        except Exception as e:
+            pruned_floor = self._parse_pruned_block_floor(e)
+            if pruned_floor is not None:
+                lower_bound = min(max(pruned_floor, 1), latest_block_number)
+                logger.info(
+                    f"Ethereum RPC is pruned; using block {lower_bound} "
+                    "as binary search lower bound"
+                )
+                return lower_bound
+
+            logger.warning(f"Could not verify Ethereum genesis block availability: {e}")
+            return 1
     
     def find_ethereum_block_for_timestamp(self, target_timestamp: int) -> Optional[int]:
         """
@@ -163,8 +398,21 @@ class UnifiedDataCollector:
                 logger.warning(f"Target timestamp {target_timestamp} is in the future")
                 return None
             
-            # Start binary search
-            low = 1  # Genesis block
+            # Start binary search at the first block available from this RPC. Pruned
+            # nodes cannot serve genesis, but they can still search within history.
+            low = self.get_ethereum_search_lower_bound(high)
+            try:
+                lower_bound_block = self.w3.eth.get_block(low)
+                lower_bound_timestamp = int(lower_bound_block.get('timestamp', 0))
+                if target_timestamp < lower_bound_timestamp:
+                    logger.warning(
+                        f"Target timestamp {target_timestamp} is older than the earliest "
+                        f"available Ethereum block {low} at timestamp {lower_bound_timestamp}"
+                    )
+                    return None
+            except Exception as e:
+                logger.error(f"Error verifying Ethereum search lower bound {low}: {e}")
+                return None
             
             logger.info(f"Searching Ethereum blocks {low} to {high} for timestamp {target_timestamp}")
             
@@ -185,6 +433,14 @@ class UnifiedDataCollector:
                         return mid
                         
                 except Exception as e:
+                    pruned_floor = self._parse_pruned_block_floor(e)
+                    if pruned_floor is not None and pruned_floor > low:
+                        low = min(pruned_floor, high)
+                        logger.info(
+                            f"Ethereum RPC pruned block {mid}; moving search lower bound to {low}"
+                        )
+                        continue
+
                     logger.warning(f"Error getting Ethereum block {mid}: {e}")
                     # Adjust search range and continue
                     if mid == low:
@@ -235,6 +491,7 @@ class UnifiedDataCollector:
             current_block = self.w3.eth.get_block('latest')
             current_block_number = int(current_block.get('number', 0))
             current_timestamp = int(current_block.get('timestamp', 0))
+            earliest_available_block = self.get_ethereum_search_lower_bound(current_block_number)
             
             # Get the latest block from our database to compare timestamps
             latest_db_snapshots = self.db.get_unified_snapshots(limit=1)
@@ -266,7 +523,11 @@ class UnifiedDataCollector:
             # Work backwards from current block
             for i in range(0, estimated_blocks_back, block_interval // 12):  # Convert seconds to blocks
                 block_number = current_block_number - i
-                if block_number <= 0:
+                if block_number < earliest_available_block:
+                    logger.info(
+                        f"Reached earliest available Ethereum block {earliest_available_block}; "
+                        "stopping range discovery"
+                    )
                     break
                     
                 try:
@@ -599,9 +860,8 @@ class UnifiedDataCollector:
             if staking_pool_data:
                 not_bonded_tokens, bonded_tokens = staking_pool_data
             else:
-                logger.warning(f"Failed to get staking pool data for height {layer_height}, using placeholder values")
-                not_bonded_tokens = 0
-                bonded_tokens = 0
+                logger.error(f"Failed to get staking pool data for height {layer_height}")
+                return None
             
             # Calculate free floating TRB
             free_floating_trb = layer_supply_trb - not_bonded_tokens - bonded_tokens
@@ -609,8 +869,8 @@ class UnifiedDataCollector:
             # Get total reporter power at the specific height
             total_reporter_power = self.get_total_reporter_power(layer_height)
             if total_reporter_power is None:
-                logger.warning(f"Failed to get reporter power for height {layer_height}, using 0")
-                total_reporter_power = 0
+                logger.error(f"Failed to get reporter power for height {layer_height}")
+                return None
             
             # Create historical data structure
             # Note: eth_block_number is passed separately to save_unified_snapshot,
@@ -720,6 +980,12 @@ class UnifiedDataCollector:
                    f"(timestamp {eth_timestamp})")
         if layer_block_height:
             logger.info(f"Using specified Tellor Layer block height: {layer_block_height}")
+
+        if not self.endpoints_are_healthy():
+            logger.error(
+                "Endpoint health check failed; unified snapshot will not be collected or saved"
+            )
+            return False
         
         # Check if we already have complete data for this timestamp
         existing_snapshot = self.db.get_unified_snapshot_by_eth_timestamp(eth_timestamp)
@@ -768,19 +1034,16 @@ class UnifiedDataCollector:
         logger.info(f"Querying bridge balance at specific ETH block {eth_block_number}...")
         bridge_balance = self.collect_bridge_data_for_block(eth_block_number, eth_timestamp, resolved_layer_height)
         
-        # If RPC query failed, fall back to CSV calculation
         if bridge_balance is None:
-            logger.info("Ethereum RPC query failed, calculating bridge balance from CSV files")
-            bridge_balance = self.calculate_historical_bridge_balance(eth_timestamp)
-            if bridge_balance is None:
-                logger.error("Failed to calculate historical bridge balance from CSV files")
-                bridge_balance = 0.0
+            logger.error("Failed to collect Bridge V1 balance from Ethereum RPC, skipping snapshot")
+            return False
         
-        # Collect V2 bridge balance (RPC-only, no CSV fallback)
+        # Collect V2 bridge balance (RPC-only)
         logger.info(f"Querying V2 bridge balance at specific ETH block {eth_block_number}...")
         bridge_v2_balance = self.collect_bridge_v2_data_for_block(eth_block_number, eth_timestamp)
         if bridge_v2_balance is None:
-            bridge_v2_balance = 0.0
+            logger.error("Failed to collect Bridge V2 balance from Ethereum RPC, skipping snapshot")
+            return False
         
         # Collect layer supply data using the resolved layer height
         logger.info(f"Collecting layer supply data at Tellor Layer block height {resolved_layer_height}...")
@@ -798,10 +1061,24 @@ class UnifiedDataCollector:
         addresses = self.balance_collector.get_all_addresses()
         if not addresses:
             logger.error("Failed to get active addresses")
-            balance_data = None
+            return False
         else:
             # Always collect balances at the resolved layer height for consistency
-            balance_data = self.balance_collector.collect_balances_at_height(addresses, resolved_layer_height)
+            try:
+                balance_data = self.balance_collector.collect_balances_at_height(
+                    addresses,
+                    resolved_layer_height,
+                )
+            except Exception as e:
+                logger.error(f"Failed to collect balances at height {resolved_layer_height}: {e}")
+                return False
+
+        if len(balance_data) != len(addresses):
+            logger.error(
+                f"Collected balances for {len(balance_data)}/{len(addresses)} addresses; "
+                "skipping snapshot"
+            )
+            return False
         
         # Save unified snapshot
         try:
