@@ -121,7 +121,7 @@ python run_unified_collection.py --layer-block 5730721
 python run_block_size_collector.py
 ```
 
-Streams live Tellor Layer blocks, records size and transaction counts, and fires Discord alerts when z-score anomalies are detected.
+Streams live Tellor Layer blocks, records size and transaction counts, and fires Discord alerts when z-score anomalies are detected. Requires both `LAYER_API_URL` (REST) and `TELLOR_LAYER_RPC_URL` (CometBFT RPC). Gas and event counts come from CometBFT `/block_results`.
 
 ### Supply Analytics (CSV output)
 
