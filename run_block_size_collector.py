@@ -29,6 +29,7 @@ Usage Examples:
 
 Environment variables (read from .env):
     LAYER_API_URL          Tellor Layer REST base URL (required)
+    TELLOR_LAYER_RPC_URL   Tellor Layer CometBFT RPC URL (required)
     DISCORD_WEBHOOK_URL    Discord webhook for anomaly alerts (optional)
     BLOCK_SIZE_ALERT_WINDOW      Override default alert_window (default 100)
     BLOCK_SIZE_ALERT_THRESHOLD   Override default z-score threshold (default 3.0)
@@ -81,6 +82,7 @@ def _optional_env(key: str, default: str) -> str:
 
 async def run_collector(
     api_url: str,
+    rpc_url: str,
     db_path: str,
     discord_webhook_url: str,
     poll_interval: float,
@@ -103,6 +105,7 @@ async def run_collector(
 
     logger.info("Starting Tellor Layer block size collector")
     logger.info("  API URL       : %s", api_url)
+    logger.info("  RPC URL       : %s", rpc_url)
     logger.info("  Database      : %s", db_path)
     logger.info("  Poll interval : %ss", poll_interval)
     logger.info("  Alert window  : %d blocks", alert_window)
@@ -125,7 +128,7 @@ async def run_collector(
                 if shutdown_event.is_set():
                     return
                 try:
-                    metrics = await fetch_block_metrics(api_url, h)
+                    metrics = await fetch_block_metrics(api_url, rpc_url, h)
                     db.insert_block_size(
                         metrics.height, metrics.timestamp,
                         metrics.block_size_bytes, metrics.tx_count,
@@ -161,7 +164,7 @@ async def run_collector(
             if shutdown_event.is_set():
                 break
             try:
-                metrics = await fetch_block_metrics(api_url, height)
+                metrics = await fetch_block_metrics(api_url, rpc_url, height)
                 db.insert_block_size(
                     metrics.height, metrics.timestamp,
                     metrics.block_size_bytes, metrics.tx_count,
@@ -249,6 +252,7 @@ def main() -> None:
     args = parse_args()
 
     api_url = _require_env("LAYER_API_URL").rstrip("/")
+    rpc_url = _require_env("TELLOR_LAYER_RPC_URL").rstrip("/")
     discord_webhook_url = _optional_env("DISCORD_WEBHOOK_URL", "")
 
     shutdown_event = asyncio.Event()
@@ -263,6 +267,7 @@ def main() -> None:
     asyncio.run(
         run_collector(
             api_url=api_url,
+            rpc_url=rpc_url,
             db_path=args.db_path,
             discord_webhook_url=discord_webhook_url,
             poll_interval=args.interval,

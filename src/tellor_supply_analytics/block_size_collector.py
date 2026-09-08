@@ -1,9 +1,9 @@
 """
 Tellor Layer block size collector.
 
-Fetches per-block metrics from the Tellor Layer REST API and stores them in
-the layer_block_sizes table via BalancesDatabase.  Logic ported from the
-compare-block-sizes project.
+Fetches per-block metrics from the Tellor Layer REST API and CometBFT RPC,
+then stores them in the layer_block_sizes table via BalancesDatabase.
+Logic ported from the compare-block-sizes project.
 """
 
 import asyncio
@@ -71,38 +71,49 @@ async def get_block(api_url: str, height: int) -> dict:
     }
 
 
-async def get_block_results(api_url: str, height: int) -> dict:
-    """
-    Fetch gas_used and event count from the transaction search endpoint.
+def parse_block_results(payload: dict) -> dict:
+    """Sum gas_used and event counts from a CometBFT block_results JSON body."""
+    if payload.get("error"):
+        return {"gas_used": 0, "num_events": 0}
 
-    Returns zeros for empty blocks — some nodes return 500 instead of an
-    empty list when a block contains no transactions.
+    result = payload.get("result") or {}
+    txs_results = result.get("txs_results") or []
+    gas_used = 0
+    num_events = 0
+    for tx_result in txs_results:
+        gas_used += int(tx_result.get("gas_used") or 0)
+        num_events += len(tx_result.get("events") or [])
+    return {"gas_used": gas_used, "num_events": num_events}
+
+
+async def get_block_results(rpc_url: str, height: int) -> dict:
     """
-    url = f"{api_url}/cosmos/tx/v1beta1/txs/block/{height}"
+    Fetch gas_used and event count from CometBFT `/block_results`.
+
+    This avoids `/cosmos/tx/v1beta1/txs/block/{height}` (GetBlockWithTxs),
+    which protobuf-decodes every tx and logs
+    `failed to decode tx ... module=baseapp` on the node.
+
+    Returns zeros when the height is missing or the node returns an empty
+    result — some nodes error instead of returning an empty tx list.
+    """
+    url = f"{rpc_url.rstrip('/')}/block_results?height={height}"
     async with httpx.AsyncClient(timeout=10) as client:
         resp = await client.get(url)
         if resp.status_code in (500, 400, 404):
             return {"gas_used": 0, "num_events": 0}
         resp.raise_for_status()
-        data = resp.json()
-
-    gas_used = 0
-    num_events = 0
-    for tx_response in data.get("tx_responses") or []:
-        gas_used += int(tx_response.get("gas_used", 0))
-        num_events += len(tx_response.get("events") or [])
-
-    return {"gas_used": gas_used, "num_events": num_events}
+        return parse_block_results(resp.json())
 
 
-async def fetch_block_metrics(api_url: str, height: int) -> BlockMetrics:
+async def fetch_block_metrics(api_url: str, rpc_url: str, height: int) -> BlockMetrics:
     """
     Fetch block body and results concurrently and return a BlockMetrics object.
 
     Raises BlockNotAvailable if the block cannot be fetched.
     """
     block_task = asyncio.create_task(get_block(api_url, height))
-    results_task = asyncio.create_task(get_block_results(api_url, height))
+    results_task = asyncio.create_task(get_block_results(rpc_url, height))
     block_data = await block_task
     results_data = await results_task
     return BlockMetrics(
